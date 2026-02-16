@@ -1,15 +1,19 @@
+
 import React, { useState, useMemo } from 'react';
-import { mockAccounts, postBatchOpeningEntry } from '../services/accounting';
-import { CheckCircle, ArrowRight, Calendar, DollarSign, Flag, CreditCard, Landmark, ArrowLeft } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
+import { CheckCircle, ArrowRight, Calendar, DollarSign, Flag, CreditCard, Landmark, ArrowLeft, Building } from 'lucide-react';
+import { BusinessId } from '../types';
 
 export const OpeningBalances: React.FC = () => {
+  const { accounts, postBatchOpeningEntry } = useFinance();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [cutoverDate, setCutoverDate] = useState<string>(new Date().getFullYear() + '-01-01');
   const [balances, setBalances] = useState<Record<string, number>>({});
+  const [selectedBusiness, setSelectedBusiness] = useState<BusinessId>('Shared');
 
   // Filter accounts for the wizard
-  const assetAccounts = useMemo(() => mockAccounts.filter(a => a.type === 'Asset' && (a.name.includes('Checking') || a.name.includes('Savings') || a.name.includes('Cash'))), []);
-  const liabilityAccounts = useMemo(() => mockAccounts.filter(a => a.type === 'Liability' && (a.name.includes('Card') || a.name.includes('Loan'))), []);
+  const assetAccounts = useMemo(() => accounts.filter(a => a.type === 'Asset' && (a.name.includes('Checking') || a.name.includes('Savings') || a.name.includes('Cash'))), [accounts]);
+  const liabilityAccounts = useMemo(() => accounts.filter(a => a.type === 'Liability' && (a.name.includes('Card') || a.name.includes('Loan'))), [accounts]);
 
   const handleBalanceChange = (id: string, val: string) => {
     const num = parseFloat(val);
@@ -22,12 +26,12 @@ export const OpeningBalances: React.FC = () => {
     }
   };
 
-  const handlePost = () => {
+  const handlePost = async () => {
     // Convert Record to Array for service
     const balanceList = Object.entries(balances).map(([accountId, amount]) => ({ accountId, amount: amount as number }));
     if (balanceList.length === 0) return;
     
-    postBatchOpeningEntry(cutoverDate, balanceList);
+    await postBatchOpeningEntry(cutoverDate, balanceList, selectedBusiness);
     setStep(4); // Success
   };
 
@@ -62,26 +66,46 @@ export const OpeningBalances: React.FC = () => {
 
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden min-h-[400px] flex flex-col">
         
-        {/* STEP 1: DATE */}
+        {/* STEP 1: DATE & ENTITY */}
         {step === 1 && (
             <div className="p-12 flex flex-col items-center text-center flex-1 justify-center">
                 <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mb-6">
                     <Flag size={32} />
                 </div>
-                <h2 className="text-2xl font-bold text-slate-900 mb-2">When is your Cutover Date?</h2>
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Initial Setup</h2>
                 <p className="text-slate-500 mb-8 max-w-md">
-                    This is the date you stopped using your old system and started using CustomBooks. 
-                    Usually the first day of the fiscal year (e.g., Jan 1st).
+                    Set your cutover date and choose which business entity these balances belong to.
                 </p>
                 
-                <div className="relative w-64 mb-8">
-                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                    <input 
-                        type="date" 
-                        value={cutoverDate} 
-                        onChange={(e) => setCutoverDate(e.target.value)}
-                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-indigo-600 focus:outline-none font-medium text-lg"
-                    />
+                <div className="w-full max-w-xs space-y-4 mb-8">
+                    <div className="space-y-1 text-left">
+                        <label className="text-xs font-bold uppercase text-slate-500">Cutover Date</label>
+                        <div className="relative">
+                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <input 
+                                type="date" 
+                                value={cutoverDate} 
+                                onChange={(e) => setCutoverDate(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:border-indigo-600 focus:outline-none font-medium"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1 text-left">
+                        <label className="text-xs font-bold uppercase text-slate-500">Legal Entity</label>
+                        <div className="relative">
+                            <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <select 
+                                value={selectedBusiness} 
+                                onChange={(e) => setSelectedBusiness(e.target.value as BusinessId)}
+                                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:border-indigo-600 focus:outline-none font-medium appearance-none"
+                            >
+                                <option value="Shared">Shared / Overhead</option>
+                                <option value="Big Sky FPV">Big Sky FPV</option>
+                                <option value="TRL Band">TRL Band</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 <button 
@@ -98,7 +122,10 @@ export const OpeningBalances: React.FC = () => {
             <div className="flex-1 flex flex-col">
                 <div className="p-8 border-b border-slate-100 bg-slate-50/50">
                     <h2 className="text-xl font-bold text-slate-900">Enter Ending Balances</h2>
-                    <p className="text-sm text-slate-500">What was the balance of these accounts on <span className="font-bold text-slate-700">{cutoverDate}</span>?</p>
+                    <p className="text-sm text-slate-500">
+                        Entity: <span className="font-bold text-indigo-600">{selectedBusiness}</span> • 
+                        Date: <span className="font-bold text-slate-700">{cutoverDate}</span>
+                    </p>
                 </div>
                 
                 <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-12 overflow-y-auto">
@@ -176,7 +203,7 @@ export const OpeningBalances: React.FC = () => {
                         <tbody className="divide-y divide-slate-100">
                             {/* Assets */}
                             {Object.entries(balances).map(([id, val]) => {
-                                const acc = mockAccounts.find(a => a.id === id);
+                                const acc = accounts.find(a => a.id === id);
                                 if (acc?.type !== 'Asset') return null;
                                 return (
                                     <tr key={id}>
@@ -188,7 +215,7 @@ export const OpeningBalances: React.FC = () => {
                             })}
                             {/* Liabilities */}
                             {Object.entries(balances).map(([id, val]) => {
-                                const acc = mockAccounts.find(a => a.id === id);
+                                const acc = accounts.find(a => a.id === id);
                                 if (acc?.type !== 'Liability') return null;
                                 return (
                                     <tr key={id}>

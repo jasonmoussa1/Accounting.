@@ -1,7 +1,7 @@
 
 export type NavPath = 'dashboard' | 'transactions' | 'inbox' | 'reconciliation' | 'invoices' | 'customers' | 'contractors' | 'reports' | 'migration' | 'projects' | 'coa' | 'setup';
 
-export type BusinessId = 'Big Sky FPV' | 'TRL Band';
+export type BusinessId = 'Big Sky FPV' | 'TRL Band' | 'Shared';
 
 export type IRSCategory = 
   | 'Meals' 
@@ -46,7 +46,7 @@ export interface Transaction extends FirestoreEntity {
   description: string;
   amount: number; // Negative for expense, Positive for income
   bankAccountId: string; // The source asset account (e.g., Checking)
-  status: 'imported' | 'posted' | 'reconciled';
+  status: 'imported' | 'posted' | 'reconciled' | 'needs_repost';
   
   transactionType: 'income' | 'expense' | 'transfer';
   transferAccountId?: string; 
@@ -123,7 +123,7 @@ export interface Reconciliation extends FirestoreEntity {
 export interface AuditEvent extends FirestoreEntity {
   id: string;
   timestamp: string;
-  action: 'LOCK_PERIOD' | 'CREATE_AJE' | 'EDIT_ATTEMPT' | 'INVOICE_CREATE' | 'INVOICE_PAYMENT';
+  action: 'LOCK_PERIOD' | 'CREATE_AJE' | 'EDIT_ATTEMPT' | 'INVOICE_CREATE' | 'INVOICE_PAYMENT' | 'PERIOD_CROSSING';
   details: string;
   user: string;
 }

@@ -3,7 +3,7 @@ import React, { useMemo } from 'react';
 import { MetricCardProps } from '../types';
 import { getDashboardMetrics } from '../services/accounting';
 import { useFinance } from '../contexts/FinanceContext';
-import { ArrowUpRight, ArrowDownRight, Wallet, AlertCircle, AlertTriangle, CreditCard, Scale, AlertOctagon, PiggyBank, Loader2, TrendingUp } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, Wallet, AlertCircle, AlertTriangle, CreditCard, Scale, AlertOctagon, PiggyBank, Loader2, TrendingUp, ShieldAlert } from 'lucide-react';
 
 const MetricCard: React.FC<MetricCardProps> = ({ title, value, trend, trendUp, type }) => {
   const getIcon = () => {
@@ -56,6 +56,8 @@ export const Dashboard: React.FC = () => {
      return getDashboardMetrics(journal, accounts, inbox, reconciliations);
   }, [journal, accounts, inbox, reconciliations, loading]);
 
+  const needsRepostCount = inbox.filter(tx => tx.status === 'needs_repost').length;
+
   if (loading) {
       return (
           <div className="flex h-full items-center justify-center">
@@ -105,10 +107,30 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+      
+      {/* INTEGRITY GUARDRAIL: NEEDS REPOST */}
+      {needsRepostCount > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse ring-2 ring-rose-500/20">
+           <div className="flex items-center gap-3">
+              <div className="bg-rose-100 p-2 rounded-full text-rose-600">
+                 <ShieldAlert size={24} />
+              </div>
+              <div>
+                 <h3 className="text-lg font-bold text-rose-900">Integrity Check</h3>
+                 <p className="text-rose-700 text-sm">
+                   {needsRepostCount} edited transactions have been reversed and need approval to re-post to the ledger.
+                 </p>
+              </div>
+           </div>
+           <button onClick={() => window.location.href='#inbox'} className="px-6 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg shadow-sm transition-colors text-sm">
+              Fix Now
+           </button>
+        </div>
+      )}
 
       {/* Task 2: Action Needed - Uncategorized Warning */}
       {needsReviewCount > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between shadow-sm">
            <div className="flex items-center gap-3">
               <div className="bg-amber-100 p-2 rounded-full text-amber-600">
                  <AlertCircle size={24} />

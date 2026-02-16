@@ -6,87 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { applyRules, checkDuplicate } from '../services/accounting';
 import { geminiService } from '../services/geminiService';
 import { CategorySelect } from './CategorySelect';
-import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank, Clock } from 'lucide-react';
-
-// --- HELPER COMPONENTS ---
-
-const OpeningBalanceModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const { postBatchOpeningEntry } = useFinance();
-  const [date, setDate] = useState('2024-01-01');
-  const [balances, setBalances] = useState<{ [key in BusinessId]: string }>({
-    'Big Sky FPV': '',
-    'TRL Band': ''
-  });
-
-  const handleSave = async () => {
-    let count = 0;
-    try {
-      const batchData: { accountId: string, amount: number }[] = [];
-      Object.entries(balances).forEach(([biz, amountStr]) => {
-        const amount = parseFloat(amountStr as string);
-        if (!isNaN(amount) && amount !== 0) {
-          const accountId = biz === 'Big Sky FPV' ? '1000' : '1001'; 
-          batchData.push({ accountId, amount });
-          count++;
-        }
-      });
-      await postBatchOpeningEntry(date, batchData);
-      alert(`Posted ${count} opening balance entries.`);
-      onClose();
-    } catch (e: any) {
-      alert(e.message);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-          <h3 className="font-bold text-lg text-slate-900">Set Opening Balances</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
-        </div>
-        <div className="p-6 space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500 uppercase">Effective Date</label>
-            <input 
-              type="date" 
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
-            />
-          </div>
-          <div className="space-y-3 pt-2">
-            <label className="text-xs font-bold text-slate-500 uppercase">Checking Account Balances</label>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded bg-sky-100 flex items-center justify-center text-sky-700 font-bold text-xs">FPV</div>
-              <input 
-                type="number" 
-                placeholder="Big Sky FPV Balance"
-                value={balances['Big Sky FPV']}
-                onChange={(e) => setBalances({...balances, 'Big Sky FPV': e.target.value})}
-                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">TRL</div>
-              <input 
-                type="number" 
-                placeholder="TRL Band Balance"
-                value={balances['TRL Band']}
-                onChange={(e) => setBalances({...balances, 'TRL Band': e.target.value})}
-                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </div>
-          </div>
-        </div>
-        <div className="p-4 bg-slate-50 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">Cancel</button>
-          <button onClick={handleSave} className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-500">Save Balances</button>
-        </div>
-      </div>
-    </div>
-  );
-};
+import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank, Clock, RotateCw } from 'lucide-react';
 
 // --- MAIN COMPONENT ---
 
@@ -99,6 +19,7 @@ interface TransactionRowProps {
 const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost }) => {
   const { accounts, projects, contractors } = useFinance();
   const isPosted = item.status === 'posted';
+  const needsRepost = item.status === 'needs_repost';
   const isExpense = item.amount < 0;
   const isTransfer = item.transactionType === 'transfer';
   const isPending = item.pending;
@@ -114,7 +35,11 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost 
       : (!!item.assignedAccount && item.assignedAccount !== 'uncategorized');
 
   return (
-    <div className={`bg-white border border-slate-200 rounded-xl p-4 transition-all ${isPosted ? 'opacity-60 bg-slate-50' : 'shadow-sm hover:shadow-md'}`}>
+    <div className={`bg-white border rounded-xl p-4 transition-all ${
+        needsRepost ? 'border-rose-300 bg-rose-50 shadow-md ring-1 ring-rose-200' :
+        isPosted ? 'opacity-60 bg-slate-50 border-slate-200' : 
+        'border-slate-200 shadow-sm hover:shadow-md'
+    }`}>
       <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
         
         {/* 1. Date & Desc */}
@@ -123,6 +48,11 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost 
             <span className="text-xs font-mono text-slate-500">{item.date}</span>
             
             {/* STATUS BADGES */}
+            {needsRepost && (
+               <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-white bg-rose-500 px-2 py-0.5 rounded shadow-sm">
+                   <RotateCw size={10} className="animate-spin-slow" /> Re-Approval Needed
+               </span>
+            )}
             {isPending && !isPosted && (
                 <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 animate-pulse">
                     <Clock size={10} /> Pending
@@ -138,7 +68,7 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost 
                 <CheckCircle2 size={10} /> Posted
               </span>
             )}
-            {item.aiConfidence && item.aiConfidence > 0.8 && !isPosted && !isTransfer && (
+            {item.aiConfidence && item.aiConfidence > 0.8 && !isPosted && !isTransfer && !needsRepost && (
                <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200" title="AI Confidence">
                  AI {(item.aiConfidence * 100).toFixed(0)}%
                </span>
@@ -313,10 +243,9 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost 
 };
 
 export const Inbox: React.FC = () => {
-  const { inbox, accounts, updateTransaction, postJournalEntry, addTransactionToInbox } = useFinance();
+  const { inbox, journal, accounts, updateTransaction, postJournalEntry, addTransactionToInbox, merchantProfiles } = useFinance();
   
   const [filter, setFilter] = useState<'all' | 'imported' | 'posted'>('imported');
-  const [showOpeningBalance, setShowOpeningBalance] = useState(false);
   
   // CSV Import State
   const [isUploading, setIsUploading] = useState(false);
@@ -324,6 +253,11 @@ export const Inbox: React.FC = () => {
   const [csvPreview, setCsvPreview] = useState<string[][]>([]);
   const [mapping, setMapping] = useState({ date: -1, description: -1, amount: -1 });
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // Import Preview State
+  const [importedItems, setImportedItems] = useState<Transaction[]>([]);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpdate = async (id: string, field: keyof Transaction, value: any) => {
@@ -380,6 +314,7 @@ export const Inbox: React.FC = () => {
       const file = e.target.files[0];
       setCsvFile(file);
       setIsUploading(true);
+      setImportedItems([]);
       
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -400,7 +335,7 @@ export const Inbox: React.FC = () => {
     }
   };
 
-  const executeImport = async () => {
+  const executeImportAnalysis = async () => {
     if (!csvFile || mapping.date === -1 || mapping.amount === -1) {
       alert("Please map Date and Amount fields.");
       return;
@@ -412,7 +347,8 @@ export const Inbox: React.FC = () => {
       const text = event.target?.result as string;
       const lines = text.split('\n').map(l => l.trim()).filter(l => l);
       
-      let count = 0;
+      const newItems: Transaction[] = [];
+      const newIndices = new Set<number>();
       
       for (let i = 1; i < lines.length; i++) {
         const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.trim().replace(/"/g, ''));
@@ -442,42 +378,60 @@ export const Inbox: React.FC = () => {
           bankAccountId: '1000',
           status: 'imported',
           transactionType: isExpense ? 'expense' : 'income',
-          pending: false // CSV imports are usually settled
+          pending: false
         };
 
-        const ruleSuggestions = applyRules(tx as Transaction);
+        // Rule & Duplicate Logic
+        const ruleSuggestions = applyRules(tx as Transaction, merchantProfiles);
         let finalTx = { ...tx, ...ruleSuggestions };
+        
+        // IMPORTANT: We temporarily assign a fake ID for duplication check to work if we were comparing against new items, 
+        // but here we just check against DB.
+        const isDup = checkDuplicate(finalTx as Transaction, journal);
+        (finalTx as any).isDuplicate = isDup;
 
-        if (!finalTx.assignedAccount && finalTx.transactionType !== 'transfer') {
-            try {
-                const aiResult = await geminiService.categorizeTransaction(tx.description, tx.amount);
-                finalTx.assignedAccount = aiResult.suggestedAccountId;
-                finalTx.isContractor = aiResult.isContractor;
-                finalTx.aiConfidence = aiResult.confidence;
-            } catch (err) {
-                console.warn("AI skipped");
-            }
-        }
-
-        await addTransactionToInbox(finalTx);
-        count++;
+        newItems.push(finalTx as Transaction);
+        if (!isDup) newIndices.add(i - 1);
       }
 
+      setImportedItems(newItems);
+      setSelectedIndices(newIndices);
       setIsProcessing(false);
-      setIsUploading(false);
-      setCsvFile(null);
-      alert(`Imported ${count} transactions.`);
     };
     reader.readAsText(csvFile);
   };
 
-  const visibleItems = inbox.filter(item => filter === 'all' || item.status === filter);
+  const finalizeImport = async () => {
+      let count = 0;
+      for (let i = 0; i < importedItems.length; i++) {
+          if (selectedIndices.has(i)) {
+              await addTransactionToInbox(importedItems[i]);
+              count++;
+          }
+      }
+      alert(`Imported ${count} transactions.`);
+      setIsUploading(false);
+      setCsvFile(null);
+      setImportedItems([]);
+  };
+
+  const toggleSelection = (idx: number) => {
+      const next = new Set(selectedIndices);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      setSelectedIndices(next);
+  };
+
+  // Modify visible items filter to include 'needs_repost' in 'imported' view for better visibility
+  const visibleItems = inbox.filter(item => {
+      if (filter === 'all') return true;
+      if (filter === 'imported') return item.status === 'imported' || item.status === 'needs_repost';
+      return item.status === filter;
+  });
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
       
-      {showOpeningBalance && <OpeningBalanceModal onClose={() => setShowOpeningBalance(false)} />}
-
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Transaction Inbox</h2>
@@ -485,7 +439,7 @@ export const Inbox: React.FC = () => {
         </div>
         <div className="flex gap-3">
           <button 
-             onClick={() => setShowOpeningBalance(true)}
+             onClick={() => window.location.href = '/setup'}
              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium"
           >
              <Settings size={16} /> Opening Balances
@@ -532,62 +486,128 @@ export const Inbox: React.FC = () => {
              <div className="w-full">
                  <div className="flex justify-between items-center mb-4 border-b border-indigo-200 pb-2">
                      <h3 className="font-bold text-indigo-900 flex items-center gap-2">
-                        <FileText size={18} /> Mapping: {csvFile?.name}
+                        <FileText size={18} /> Import: {csvFile?.name}
                      </h3>
-                     <button onClick={() => { setIsUploading(false); setCsvFile(null); }} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
+                     <button onClick={() => { setIsUploading(false); setCsvFile(null); setImportedItems([]); }} className="text-indigo-400 hover:text-indigo-700"><X size={18}/></button>
                  </div>
                  
-                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                    <div>
-                        <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Date Column</label>
-                        <select 
-                            className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
-                            value={mapping.date}
-                            onChange={(e) => setMapping({...mapping, date: parseInt(e.target.value)})}
-                        >
-                            <option value={-1}>Select Column...</option>
-                            {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Description Column</label>
-                        <select 
-                            className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
-                            value={mapping.description}
-                            onChange={(e) => setMapping({...mapping, description: parseInt(e.target.value)})}
-                        >
-                            <option value={-1}>Select Column...</option>
-                            {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Amount Column</label>
-                        <select 
-                            className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
-                            value={mapping.amount}
-                            onChange={(e) => setMapping({...mapping, amount: parseInt(e.target.value)})}
-                        >
-                            <option value={-1}>Select Column...</option>
-                            {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                        </select>
-                    </div>
-                 </div>
+                 {/* STAGE 1: MAPPING */}
+                 {importedItems.length === 0 && (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                            <div>
+                                <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Date Column</label>
+                                <select 
+                                    className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
+                                    value={mapping.date}
+                                    onChange={(e) => setMapping({...mapping, date: parseInt(e.target.value)})}
+                                >
+                                    <option value={-1}>Select Column...</option>
+                                    {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Description Column</label>
+                                <select 
+                                    className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
+                                    value={mapping.description}
+                                    onChange={(e) => setMapping({...mapping, description: parseInt(e.target.value)})}
+                                >
+                                    <option value={-1}>Select Column...</option>
+                                    {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-indigo-800 uppercase mb-1">Amount Column</label>
+                                <select 
+                                    className="w-full text-sm border-indigo-200 rounded-lg focus:ring-indigo-500"
+                                    value={mapping.amount}
+                                    onChange={(e) => setMapping({...mapping, amount: parseInt(e.target.value)})}
+                                >
+                                    <option value={-1}>Select Column...</option>
+                                    {csvPreview[0]?.map((h, i) => <option key={i} value={i}>{h}</option>)}
+                                </select>
+                            </div>
+                        </div>
 
-                 <div className="bg-white/50 rounded-lg p-3 text-xs text-indigo-800 mb-4 font-mono">
-                    <strong>Preview Row 1: </strong> 
-                    {mapping.date > -1 ? csvPreview[1]?.[mapping.date] : '??'} | 
-                    {mapping.description > -1 ? csvPreview[1]?.[mapping.description] : '??'} | 
-                    {mapping.amount > -1 ? csvPreview[1]?.[mapping.amount] : '??'}
-                 </div>
+                        <div className="bg-white/50 rounded-lg p-3 text-xs text-indigo-800 mb-4 font-mono">
+                            <strong>Preview Row 1: </strong> 
+                            {mapping.date > -1 ? csvPreview[1]?.[mapping.date] : '??'} | 
+                            {mapping.description > -1 ? csvPreview[1]?.[mapping.description] : '??'} | 
+                            {mapping.amount > -1 ? csvPreview[1]?.[mapping.amount] : '??'}
+                        </div>
 
-                 <button 
-                    onClick={executeImport} 
-                    disabled={isProcessing}
-                    className="w-full py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500 transition-colors flex items-center justify-center gap-2"
-                 >
-                    {isProcessing ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}
-                    {isProcessing ? 'Analyzing & Categorizing...' : 'Run Import & AI Categorization'}
-                 </button>
+                        <button 
+                            onClick={executeImportAnalysis} 
+                            disabled={isProcessing}
+                            className="w-full py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500 transition-colors flex items-center justify-center gap-2"
+                        >
+                            {isProcessing ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}
+                            {isProcessing ? 'Analyzing...' : 'Preview & Detect Duplicates'}
+                        </button>
+                    </>
+                 )}
+
+                 {/* STAGE 2: REVIEW */}
+                 {importedItems.length > 0 && (
+                     <div className="space-y-4">
+                         <div className="max-h-[400px] overflow-y-auto border border-slate-200 rounded-lg bg-white">
+                             <table className="w-full text-sm text-left">
+                                 <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-100">
+                                     <tr>
+                                         <th className="p-3 w-8"><input type="checkbox" onChange={() => {
+                                             if (selectedIndices.size === importedItems.length) setSelectedIndices(new Set());
+                                             else setSelectedIndices(new Set(importedItems.map((_, i) => i)));
+                                         }} checked={selectedIndices.size === importedItems.length} /></th>
+                                         <th className="p-3">Date</th>
+                                         <th className="p-3">Description</th>
+                                         <th className="p-3 text-right">Amount</th>
+                                         <th className="p-3">Analysis</th>
+                                     </tr>
+                                 </thead>
+                                 <tbody>
+                                     {importedItems.map((item, idx) => {
+                                         const isDup = (item as any).isDuplicate;
+                                         const isTransfer = item.transactionType === 'transfer';
+                                         const isSelected = selectedIndices.has(idx);
+                                         
+                                         return (
+                                             <tr key={idx} className={`border-b border-slate-50 ${isDup ? 'bg-rose-50' : 'hover:bg-slate-50'} ${isSelected ? '' : 'opacity-50'}`}>
+                                                 <td className="p-3">
+                                                     <input 
+                                                        type="checkbox" 
+                                                        checked={isSelected} 
+                                                        onChange={() => toggleSelection(idx)}
+                                                        disabled={isDup} // Disable duplicate import by default
+                                                     />
+                                                 </td>
+                                                 <td className="p-3 font-mono text-slate-600">{item.date}</td>
+                                                 <td className="p-3 font-medium text-slate-900">{item.description}</td>
+                                                 <td className={`p-3 text-right font-mono ${item.amount < 0 ? 'text-slate-900' : 'text-emerald-600'}`}>
+                                                     {item.amount < 0 ? '-' : '+'}${Math.abs(item.amount).toFixed(2)}
+                                                 </td>
+                                                 <td className="p-3">
+                                                     {isDup && <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded"><AlertTriangle size={10} /> Duplicate</span>}
+                                                     {isTransfer && !isDup && <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded"><ArrowLeftRight size={10} /> Transfer</span>}
+                                                     {item.assignedAccount && !isDup && <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded"><CheckCircle2 size={10} /> Rule Match</span>}
+                                                 </td>
+                                             </tr>
+                                         );
+                                     })}
+                                 </tbody>
+                             </table>
+                         </div>
+                         
+                         <div className="flex justify-between items-center bg-indigo-50 p-3 rounded-lg border border-indigo-100 text-indigo-900 text-sm">
+                             <div>
+                                 <strong>{selectedIndices.size}</strong> items selected for import.
+                             </div>
+                             <button onClick={finalizeImport} className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-500 shadow-sm">
+                                 Import Selected
+                             </button>
+                         </div>
+                     </div>
+                 )}
              </div>
          )}
       </div>

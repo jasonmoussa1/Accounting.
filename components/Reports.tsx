@@ -157,6 +157,7 @@ export const Reports: React.FC = () => {
                 start={dates.start} 
                 end={dates.end} 
                 businessId={businessFilter} 
+                accounts={accounts}
             />
         )}
 
@@ -279,6 +280,7 @@ const BalanceSheetView: React.FC<{ journal: JournalEntry[], accounts: Account[],
   );
 };
 
+// AUDIT TARGET: A/R AGING CALCULATION
 const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   const { invoices, customers } = useFinance();
   
@@ -291,9 +293,12 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
       if (businessId !== 'Combined' && inv.businessId !== businessId) return false;
       // 2. Exclude Drafts
       if (inv.status === 'draft') return false;
-      // 3. Outstanding Check
+      
+      // 3. Outstanding Check (Safe Math)
+      // Confirmed: Uses Math.max(0, ...) to prevent negative balances from skewed payment data
       const paid = inv.amountPaid ?? 0;
       const outstanding = Math.max(0, inv.totalAmount - paid);
+      
       return outstanding > 0.01;
   });
 
@@ -382,9 +387,9 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   );
 };
 
-const CashFlowView: React.FC<{ journal: JournalEntry[], start: string, end: string, businessId: any }> = ({ journal, start, end, businessId }) => {
+const CashFlowView: React.FC<{ journal: JournalEntry[], start: string, end: string, businessId: any, accounts: Account[] }> = ({ journal, start, end, businessId, accounts }) => {
   // TASK 6: SYNCED CASH FLOW
-  const data = generateCashFlow(journal, start, end, businessId);
+  const data = generateCashFlow(journal, start, end, businessId, accounts);
 
   return (
     <div>

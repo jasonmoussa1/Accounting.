@@ -25,7 +25,7 @@ export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'las
     return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
   }
   if (range === 'ytd') {
-    // Current Calendar Year to TODAY (Task 3)
+    // Current Calendar Year to TODAY
     return { start: `${year}-01-01`, end: now.toISOString().split('T')[0] };
   }
   if (range === 'year') {
@@ -83,8 +83,11 @@ export const generateProfitAndLoss = (
 
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
-    // Task 5: Combined Logic (Aggregate if 'Combined', else filter)
-    if (businessId !== 'Combined' && entry.businessId !== businessId) return;
+    
+    // Task 3: Shared Logic (Include Specific OR Shared, or All if Combined)
+    if (businessId !== 'Combined') {
+        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
+    }
 
     entry.lines.forEach(line => {
       const current = accountTotals.get(line.accountId) || 0;
@@ -162,7 +165,11 @@ export const generateBalanceSheet = (
 
   journal.forEach(entry => {
     if (entry.date > asOfDate) return;
-    if (businessId !== 'Combined' && entry.businessId !== businessId) return;
+    
+    // Task 3: Shared Logic
+    if (businessId !== 'Combined') {
+        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
+    }
 
     entry.lines.forEach(line => {
       // 1. Accumulate Account Balance
@@ -267,7 +274,11 @@ export const generateCashFlow = (
   
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
-    if (businessId !== 'Combined' && entry.businessId !== businessId) return;
+    
+    // Task 3: Shared Logic
+    if (businessId !== 'Combined') {
+        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
+    }
 
     const monthKey = entry.date.substring(0, 7); // YYYY-MM
     if (!months.has(monthKey)) months.set(monthKey, {in: 0, out: 0});

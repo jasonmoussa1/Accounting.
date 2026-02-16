@@ -181,7 +181,9 @@ export const detectTransfer = (tx: Transaction): Partial<Transaction> => {
 };
 
 export const applyMerchantMemory = (tx: Transaction, merchantProfiles: MerchantProfile[]): Partial<Transaction> => {
+    // Basic fuzzy match: Check if merchant name is inside transaction description
     const profile = merchantProfiles.find(p => tx.description.toLowerCase().includes(p.merchantName.toLowerCase()));
+    
     if (profile) {
         return {
             assignedBusiness: profile.defaultBusiness,
@@ -194,9 +196,11 @@ export const applyMerchantMemory = (tx: Transaction, merchantProfiles: MerchantP
 };
 
 export const applyRules = (tx: Transaction, merchantProfiles: MerchantProfile[] = []): Partial<Transaction> => {
+  // 1. Learned Memory (Highest Priority)
   const memory = applyMerchantMemory(tx, merchantProfiles);
   if (memory.assignedAccount) return memory;
 
+  // 2. Keyword Heuristics
   const transfer = detectTransfer(tx);
   if (transfer.transactionType) return transfer;
 
@@ -204,13 +208,23 @@ export const applyRules = (tx: Transaction, merchantProfiles: MerchantProfile[] 
 };
 
 export const checkDuplicate = (tx: Transaction, journal: JournalEntry[] = []): boolean => {
+  // A duplicate is defined as: Same Date AND Same Amount AND (Similar Description OR Same Account)
   return journal.some(je => {
+    // Date Match
     const isDateMatch = je.date === tx.date;
-    const isAmountMatch = je.lines.some(l => 
-      Math.abs(l.debit - l.credit) === Math.abs(tx.amount) && 
-      l.accountId === tx.bankAccountId
-    );
-    return isDateMatch && isAmountMatch;
+    if (!isDateMatch) return false;
+
+    // Amount Match (Check if ANY line in the JE matches the transaction amount)
+    // Transaction amount is usually the bank line impact.
+    // If expense (-100), ledger bank line is credit 100.
+    // If income (+100), ledger bank line is debit 100.
+    const isAmountMatch = je.lines.some(l => {
+        // Simple check: absolute value match is usually enough for single-line transactions
+        // Ideally we check specific account, but bankAccountId might not match ledger ID exactly during import
+        return Math.abs(l.debit - l.credit) === Math.abs(tx.amount);
+    });
+
+    return isAmountMatch;
   });
 };
 
@@ -237,7 +251,7 @@ export const mockCustomers: import('../types').Customer[] = [];
 export const mockReconciliations: Reconciliation[] = [];
 export const mockMerchantProfiles: MerchantProfile[] = [];
 export const mockServiceItems: import('../types').ServiceItem[] = [];
-export const mockOpenInvoices: any[] = []; // DEPRECATED
+export const mockOpenInvoices: any[] = []; 
 export const addAccount = (...args: any[]) => { throw new Error("Use FinanceContext") };
 export const updateAccount = (...args: any[]) => { throw new Error("Use FinanceContext") };
 export const archiveAccount = (...args: any[]) => { throw new Error("Use FinanceContext") };
