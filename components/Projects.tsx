@@ -1,11 +1,13 @@
-
 import React, { useState, useMemo } from 'react';
 import { Project, BusinessId, JournalEntry } from '../types';
-import { mockProjects, calculateProjectStats, mockJournal, mockAccounts, mockCustomers, addProject } from '../services/accounting';
+import { calculateProjectStats } from '../services/accounting';
+import { useFinance } from '../contexts/FinanceContext';
 import { Autocomplete } from './Autocomplete';
 import { Briefcase, Calendar, ChevronRight, DollarSign, TrendingUp, TrendingDown, Plane, Users, ArrowLeft, Plus } from 'lucide-react';
 
 export const Projects: React.FC = () => {
+  const { projects: allProjects, journal, accounts, customers, addProject } = useFinance();
+
   const [filter, setFilter] = useState<'All' | BusinessId>('All');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
@@ -15,20 +17,20 @@ export const Projects: React.FC = () => {
   const [newProjectBusiness, setNewProjectBusiness] = useState<BusinessId>('Big Sky FPV');
   const [newProjectClient, setNewProjectClient] = useState(''); // ID
 
-  const filteredProjects = mockProjects.filter(p => filter === 'All' || p.businessId === filter);
+  const filteredProjects = allProjects.filter(p => filter === 'All' || p.businessId === filter);
 
-  const clientOptions = useMemo(() => mockCustomers.map(c => ({
+  const clientOptions = useMemo(() => customers.map(c => ({
     id: c.id,
     label: c.name,
     subLabel: c.defaultBusiness,
     data: c
-  })), [mockCustomers.length]);
+  })), [customers]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!newProjectName || !newProjectClient) return;
-    const client = mockCustomers.find(c => c.id === newProjectClient);
+    const client = customers.find(c => c.id === newProjectClient);
     
-    addProject({
+    await addProject({
       name: newProjectName,
       businessId: newProjectBusiness,
       clientId: client?.name || 'Unknown',
@@ -42,8 +44,8 @@ export const Projects: React.FC = () => {
   };
 
   if (selectedProject) {
-    const stats = calculateProjectStats(selectedProject.id);
-    const projectEntries = mockJournal.filter(je => je.projectId === selectedProject.id);
+    const stats = calculateProjectStats(selectedProject.id, journal, accounts);
+    const projectEntries = journal.filter(je => je.projectId === selectedProject.id);
 
     return (
       <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -140,7 +142,7 @@ export const Projects: React.FC = () => {
               {projectEntries.map((entry) => (
                 <React.Fragment key={entry.id}>
                   {entry.lines.map((line, idx) => {
-                     const acct = mockAccounts.find(a => a.id === line.accountId);
+                     const acct = accounts.find(a => a.id === line.accountId);
                      if (line.debit === 0 && line.credit === 0) return null;
 
                      return (
@@ -215,7 +217,7 @@ export const Projects: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredProjects.map(project => {
-          const stats = calculateProjectStats(project.id);
+          const stats = calculateProjectStats(project.id, journal, accounts);
           return (
             <div 
               key={project.id} 
@@ -327,8 +329,8 @@ export const Projects: React.FC = () => {
                </button>
              </div>
            </div>
-        </div>
-      )}
+         </div>
+       )}
     </div>
   );
 };

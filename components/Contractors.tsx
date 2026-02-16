@@ -1,58 +1,76 @@
 
 import React, { useState } from 'react';
 import { Contractor, JournalEntry } from '../types';
-import { mockContractors, mockJournal, mockProjects } from '../services/accounting';
-import { Search, Plus, FileText, AlertCircle, CheckCircle, MoreVertical, History, User, ShieldAlert, Download, Upload, ArrowLeft, Mail, MapPin } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
+import { Search, Plus, FileText, AlertCircle, CheckCircle, History, User, ShieldAlert, Download, Upload, ArrowLeft, Mail, MapPin, Building } from 'lucide-react';
 
 export const Contractors: React.FC = () => {
+  const { contractors, journal, projects, addContractor } = useFinance();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContractor, setSelectedContractor] = useState<Contractor | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  
+  // New Contractor State
+  const [newContractorName, setNewContractorName] = useState('');
+  const [newContractorEmail, setNewContractorEmail] = useState('');
 
-  // Helper: Calculate YTD from Ledger
+  // Helper: Calculate YTD from Live Ledger
   const getContractorStats = (contractorId: string) => {
     let totalPaid = 0;
-    const payments: { entry: JournalEntry, amount: number }[] = [];
+    const payments: { entry: JournalEntry, amount: number, projectName?: string }[] = [];
 
-    mockJournal.forEach(entry => {
+    journal.forEach(entry => {
       entry.lines.forEach(line => {
         if (line.contractorId === contractorId) {
-          totalPaid += (line.debit - line.credit); // Expense is Debit
-          payments.push({ entry, amount: line.debit - line.credit });
+          // Expense is Debit. We sum debits.
+          // Note: If there's a refund (Credit), it should reduce the total paid.
+          const amount = line.debit - line.credit;
+          if (amount !== 0) {
+             totalPaid += amount;
+             const project = projects.find(p => p.id === entry.projectId);
+             payments.push({ 
+                 entry, 
+                 amount,
+                 projectName: project?.name
+             });
+          }
         }
       });
     });
 
-    return { totalPaid, payments: payments.sort((a,b) => b.entry.date.localeCompare(a.entry.date)) };
+    return { 
+        totalPaid, 
+        payments: payments.sort((a,b) => b.entry.date.localeCompare(a.entry.date)) 
+    };
   };
 
   const getStatusBadge = (contractor: Contractor, totalPaid: number) => {
     // Logic 1: Compliance Warning (Paid anything but no W9)
     if (totalPaid > 0 && !contractor.w9Received) {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-          <ShieldAlert size={12} />
-          W-9 Missing
-        </span>
-      );
+        // High severity if over threshold
+        if (totalPaid >= 600) {
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                  <ShieldAlert size={12} />
+                  W-9 Missing ({'>'}$600)
+                </span>
+            );
+        }
+        return (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+            <AlertCircle size={12} />
+            W-9 Missing
+            </span>
+        );
     }
-    // Logic 2: 1099 Eligible (Paid >= 600)
-    if (totalPaid >= 600) {
-      if (contractor.w9Received) {
+    // Logic 2: 1099 Eligible (Paid >= 600) & Good Standing
+    if (totalPaid >= 600 && contractor.w9Received) {
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
             <CheckCircle size={12} />
             Ready for 1099
           </span>
         );
-      } else {
-        // Fallback (should be covered by logic 1, but if paid >= 600 and no W9, it's definitely warning)
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-            <ShieldAlert size={12} />
-            W-9 Missing (> $600)
-          </span>
-        );
-      }
     }
     // Logic 3: Below Threshold
     return (
@@ -62,15 +80,14 @@ export const Contractors: React.FC = () => {
     );
   };
 
-  const filteredContractors = mockContractors.filter(c => 
+  const filteredContractors = contractors.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const handleExport = () => {
-    // Generate CSV logic
     const headers = "Recipient Name,Tax ID,Address,City,State,Zip,Entity,Total Paid YTD,W9 Status\n";
-    const rows = mockContractors.map(c => {
+    const rows = contractors.map(c => {
       const stats = getContractorStats(c.id);
       if (stats.totalPaid < 600) return null; // Only export eligible
       return `"${c.legalName}","${c.taxId || ''}","${c.address}","${c.city}","${c.state}","${c.zip}","${c.taxClassification}",${stats.totalPaid},${c.w9Received ? 'Received' : 'Missing'}`;
@@ -80,9 +97,28 @@ export const Contractors: React.FC = () => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "1099_report_2023.csv");
+    link.setAttribute("download", `1099_report_${new Date().getFullYear()}.csv`);
     document.body.appendChild(link);
     link.click();
+  };
+
+  const handleAddContractor = async () => {
+      if(!newContractorName) return;
+      await addContractor({
+          name: newContractorName,
+          legalName: newContractorName,
+          email: newContractorEmail,
+          address: '',
+          city: '',
+          state: '',
+          zip: '',
+          taxClassification: 'Individual',
+          w9Received: false,
+          status: 'active'
+      });
+      setShowAddModal(false);
+      setNewContractorName('');
+      setNewContractorEmail('');
   };
 
   // DETAIL VIEW
@@ -128,7 +164,7 @@ export const Contractors: React.FC = () => {
                 <Mail className="text-slate-400 mt-0.5" size={16} />
                 <div>
                   <p className="text-slate-900 font-medium">Email</p>
-                  <p className="text-slate-500">{selectedContractor.email}</p>
+                  <p className="text-slate-500">{selectedContractor.email || 'No email'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -136,8 +172,8 @@ export const Contractors: React.FC = () => {
                 <div>
                   <p className="text-slate-900 font-medium">Address</p>
                   <p className="text-slate-500">
-                    {selectedContractor.address}<br/>
-                    {selectedContractor.city}, {selectedContractor.state} {selectedContractor.zip}
+                    {selectedContractor.address || 'No address'}<br/>
+                    {selectedContractor.city} {selectedContractor.state} {selectedContractor.zip}
                   </p>
                 </div>
               </div>
@@ -168,47 +204,51 @@ export const Contractors: React.FC = () => {
           {/* Ledger History */}
           <div className="md:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
              <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                <h3 className="font-semibold text-slate-900">Payment History (YTD)</h3>
+                <h3 className="font-semibold text-slate-900">Payment History (All Businesses)</h3>
                 <span className="font-mono font-bold text-slate-900 text-lg">
                   ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </span>
              </div>
-             <table className="w-full text-sm text-left">
-                <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-100">
-                  <tr>
-                    <th className="px-6 py-3 font-medium">Date</th>
-                    <th className="px-6 py-3 font-medium">Description</th>
-                    <th className="px-6 py-3 font-medium">Project</th>
-                    <th className="px-6 py-3 font-medium text-right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {payments.map((p, idx) => {
-                    const project = mockProjects.find(proj => proj.id === p.entry.projectId);
-                    return (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="px-6 py-3 text-slate-500 font-mono">{p.entry.date}</td>
-                        <td className="px-6 py-3 font-medium text-slate-900">{p.entry.description}</td>
-                        <td className="px-6 py-3 text-slate-500">
-                           {project ? (
-                             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 border border-slate-200">
-                               {project.name}
-                             </span>
-                           ) : '-'}
-                        </td>
-                        <td className="px-6 py-3 text-right font-mono font-medium text-slate-900">
-                          ${p.amount.toLocaleString()}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {payments.length === 0 && (
+             <div className="overflow-y-auto max-h-[600px]">
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-100 sticky top-0">
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-slate-400">No payments found for this contractor.</td>
+                        <th className="px-6 py-3 font-medium">Date</th>
+                        <th className="px-6 py-3 font-medium">Description</th>
+                        <th className="px-6 py-3 font-medium">Project</th>
+                        <th className="px-6 py-3 font-medium text-right">Amount</th>
                     </tr>
-                  )}
-                </tbody>
-             </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                    {payments.map((p, idx) => {
+                        return (
+                        <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-6 py-3 text-slate-500 font-mono">{p.entry.date}</td>
+                            <td className="px-6 py-3 font-medium text-slate-900">
+                                {p.entry.description}
+                                <div className="text-[10px] text-slate-400 font-normal">{p.entry.businessId}</div>
+                            </td>
+                            <td className="px-6 py-3 text-slate-500">
+                            {p.projectName ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 border border-slate-200">
+                                {p.projectName}
+                                </span>
+                            ) : '-'}
+                            </td>
+                            <td className="px-6 py-3 text-right font-mono font-medium text-slate-900">
+                            ${p.amount.toLocaleString()}
+                            </td>
+                        </tr>
+                        );
+                    })}
+                    {payments.length === 0 && (
+                        <tr>
+                        <td colSpan={4} className="px-6 py-8 text-center text-slate-400">No payments found for this contractor.</td>
+                        </tr>
+                    )}
+                    </tbody>
+                </table>
+             </div>
           </div>
         </div>
       </div>
@@ -231,7 +271,10 @@ export const Contractors: React.FC = () => {
             <Download size={16} />
             Export 1099 Report
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm shadow-indigo-200">
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm shadow-indigo-200"
+          >
             <Plus size={16} />
             Add Contractor
           </button>
@@ -269,12 +312,13 @@ export const Contractors: React.FC = () => {
             <tbody className="divide-y divide-slate-100">
               {filteredContractors.map((contractor) => {
                 const { totalPaid } = getContractorStats(contractor.id);
-                const isHeatMapWarning = totalPaid >= 600 || (totalPaid > 0 && !contractor.w9Received);
+                // Flag if paid >= 600 or if paid > 0 and no W9
+                const isWarning = totalPaid >= 600 || (totalPaid > 0 && !contractor.w9Received);
                 
                 return (
                   <tr 
                     key={contractor.id} 
-                    className={`hover:bg-slate-50 transition-colors cursor-pointer ${isHeatMapWarning ? 'bg-amber-50/30' : ''}`}
+                    className={`hover:bg-slate-50 transition-colors cursor-pointer ${isWarning ? 'bg-amber-50/30' : ''}`}
                     onClick={() => setSelectedContractor(contractor)}
                   >
                     <td className="px-6 py-4">
@@ -292,7 +336,7 @@ export const Contractors: React.FC = () => {
                       {contractor.taxId || <span className="text-amber-500 text-xs italic">Missing</span>}
                     </td>
                     <td className="px-6 py-4 text-slate-600">
-                      {contractor.city}, {contractor.state}
+                      {contractor.city && contractor.state ? `${contractor.city}, ${contractor.state}` : <span className="text-slate-300">-</span>}
                     </td>
                     <td className="px-6 py-4 text-right font-medium text-slate-900">
                       ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -311,10 +355,59 @@ export const Contractors: React.FC = () => {
                   </tr>
                 );
               })}
+              {filteredContractors.length === 0 && (
+                  <tr><td colSpan={6} className="text-center py-12 text-slate-400">No contractors found.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Add Modal */}
+      {showAddModal && (
+         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 backdrop-blur-sm p-4">
+           <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
+             <h3 className="text-lg font-bold text-slate-900 mb-4">Add New Contractor</h3>
+             <div className="space-y-4">
+               <div>
+                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Contractor Name</label>
+                 <input 
+                   type="text" 
+                   value={newContractorName}
+                   onChange={(e) => setNewContractorName(e.target.value)}
+                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                   placeholder="e.g. John Doe"
+                   autoFocus
+                 />
+               </div>
+               <div>
+                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Email</label>
+                 <input 
+                   type="email" 
+                   value={newContractorEmail}
+                   onChange={(e) => setNewContractorEmail(e.target.value)}
+                   className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                   placeholder="john@example.com"
+                 />
+               </div>
+             </div>
+             <div className="flex justify-end gap-3 mt-8">
+               <button 
+                 onClick={() => setShowAddModal(false)}
+                 className="px-4 py-2 text-slate-600 hover:text-slate-900 text-sm font-medium"
+               >
+                 Cancel
+               </button>
+               <button 
+                 onClick={handleAddContractor}
+                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 text-sm font-medium shadow-sm"
+               >
+                 Create Contractor
+               </button>
+             </div>
+           </div>
+         </div>
+      )}
     </div>
   );
 };

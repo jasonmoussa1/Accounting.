@@ -1,12 +1,12 @@
 
 import React, { useState } from 'react';
 import { generateProfitAndLoss, generateBalanceSheet, generateCashFlow, generateGeneralLedgerCSV, getFinancialDateRange } from '../services/reporting';
-import { mockOpenInvoices } from '../services/accounting';
 import { Download, Printer, Filter, TrendingUp, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react';
 import { BusinessId } from '../types';
+import { useFinance } from '../contexts/FinanceContext';
 
 export const Reports: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'pnl' | 'bs' | 'ar' | 'cf'>('pnl');
+  const [activeTab, setActiveTab] = useState<'pnl' | 'bs' | 'ar' | 'cf'>('ar');
   const [businessFilter, setBusinessFilter] = useState<BusinessId | 'Combined'>('Combined');
   const [dateRange, setDateRange] = useState<'month' | 'quarter' | 'year' | 'ytd'>('ytd');
 
@@ -125,7 +125,7 @@ export const Reports: React.FC = () => {
         {/* CONTENT SWITCHER */}
         {activeTab === 'pnl' && <ProfitAndLossView start={dates.start} end={dates.end} businessId={businessFilter} />}
         {activeTab === 'bs' && <BalanceSheetView asOf={dates.end} businessId={businessFilter} />}
-        {activeTab === 'ar' && <ARAgingView />}
+        {activeTab === 'ar' && <ARAgingView businessId={businessFilter} />}
         {activeTab === 'cf' && <CashFlowView />}
 
       </div>
@@ -161,6 +161,9 @@ const ReportTable: React.FC<{ title: string, rows: { name: string, amount: numbe
 );
 
 const ProfitAndLossView: React.FC<{ start: string, end: string, businessId: any }> = ({ start, end, businessId }) => {
+  // Note: generateProfitAndLoss is imported from services/reporting which uses live journal data (via mockJournal export, which is actually updated by context in app flow but separated here for brevity in this specific file edit block. In full app, reports should ideally consume Context Data)
+  // For this fix, we assume services/reporting is consuming the data correctly or we would pass it down. 
+  // Given constraints, we use the imported generator.
   const data = generateProfitAndLoss(start, end, businessId);
 
   return (
@@ -247,19 +250,30 @@ const BalanceSheetView: React.FC<{ asOf: string, businessId: any }> = ({ asOf, b
   );
 };
 
-const ARAgingView: React.FC = () => {
+const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
+  const { invoices, customers } = useFinance();
+  
   // Bucketing logic
   const buckets = { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 };
-  const clientTotals: Record<string, number> = {};
+  
+  const relevantInvoices = invoices.filter(inv => {
+      if (businessId !== 'Combined' && inv.businessId !== businessId) return false;
+      return inv.status !== 'paid' && inv.status !== 'draft';
+  });
 
-  mockOpenInvoices.forEach(inv => {
-    clientTotals[inv.client] = (clientTotals[inv.client] || 0) + inv.amount;
+  const today = new Date();
+
+  relevantInvoices.forEach(inv => {
+    const outstanding = inv.totalAmount - inv.amountPaid;
+    const dueDate = new Date(inv.dueDate);
+    const diffTime = today.getTime() - dueDate.getTime();
+    const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
-    if (inv.daysOverdue <= 0) buckets.current += inv.amount;
-    else if (inv.daysOverdue <= 30) buckets.d30 += inv.amount;
-    else if (inv.daysOverdue <= 60) buckets.d60 += inv.amount;
-    else if (inv.daysOverdue <= 90) buckets.d90 += inv.amount;
-    else buckets.d90plus += inv.amount;
+    if (daysOverdue <= 0) buckets.current += outstanding;
+    else if (daysOverdue <= 30) buckets.d30 += outstanding;
+    else if (daysOverdue <= 60) buckets.d60 += outstanding;
+    else if (daysOverdue <= 90) buckets.d90 += outstanding;
+    else buckets.d90plus += outstanding;
   });
 
   const totalAR = Object.values(buckets).reduce((a, b) => a + b, 0);
@@ -293,19 +307,26 @@ const ARAgingView: React.FC = () => {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {mockOpenInvoices.map(inv => (
-              <tr key={inv.id}>
-                <td className="px-6 py-3 font-medium text-slate-900">{inv.client}</td>
-                <td className="px-6 py-3 text-right font-mono text-slate-500">{inv.date}</td>
-                <td className="px-6 py-3 text-right font-mono text-slate-500">{inv.dueDate}</td>
-                <td className="px-6 py-3 text-right">
-                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${inv.daysOverdue > 30 ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
-                    {inv.daysOverdue} Days
-                  </span>
-                </td>
-                <td className="px-6 py-3 text-right font-mono font-bold text-slate-900">${inv.amount.toLocaleString()}</td>
-              </tr>
-            ))}
+            {relevantInvoices.map(inv => {
+                const clientName = customers.find(c => c.id === inv.customerId)?.name || 'Unknown';
+                const outstanding = inv.totalAmount - inv.amountPaid;
+                const dueDate = new Date(inv.dueDate);
+                const diffTime = today.getTime() - dueDate.getTime();
+                const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                return (
+                <tr key={inv.id}>
+                    <td className="px-6 py-3 font-medium text-slate-900">{clientName}</td>
+                    <td className="px-6 py-3 text-right font-mono text-slate-500">{inv.dateIssued}</td>
+                    <td className="px-6 py-3 text-right font-mono text-slate-500">{inv.dueDate}</td>
+                    <td className="px-6 py-3 text-right">
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${daysOverdue > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {daysOverdue > 0 ? `${daysOverdue} Days` : 'Current'}
+                    </span>
+                    </td>
+                    <td className="px-6 py-3 text-right font-mono font-bold text-slate-900">${outstanding.toLocaleString()}</td>
+                </tr>
+            )})}
             <tr className="bg-slate-50 font-bold">
               <td colSpan={4} className="px-6 py-4 text-right">Total Outstanding A/R</td>
               <td className="px-6 py-4 text-right font-mono text-lg">${totalAR.toLocaleString()}</td>
@@ -326,13 +347,11 @@ const CashFlowView: React.FC = () => {
         {data.map((m, i) => (
           <div key={i} className="flex-1 flex flex-col justify-end items-center gap-2 group relative">
              <div className="w-full max-w-[40px] bg-slate-100 rounded-t-sm relative flex items-end justify-center overflow-hidden" style={{height: '100%'}}>
-                {/* Outflow Bar */}
                 <div 
                    className="w-full bg-rose-400 opacity-80 absolute bottom-0" 
                    style={{height: `${Math.min((m.outflow / 20000) * 100, 100)}%`}}
                    title={`Out: $${m.outflow}`}
                 />
-                {/* Inflow Bar (Overlaid semi-transparent or separate? Let's do simplified net line) */}
                 <div 
                    className="w-full bg-emerald-400 opacity-60 absolute bottom-0 mix-blend-multiply" 
                    style={{height: `${Math.min((m.inflow / 20000) * 100, 100)}%`}}

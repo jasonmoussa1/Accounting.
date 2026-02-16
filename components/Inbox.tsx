@@ -1,30 +1,36 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Transaction, Account, BusinessId } from '../types';
-import { mockInbox, mockAccounts, mockProjects, mockContractors, applyRules, checkDuplicate, postTransactionToLedger, postOpeningBalance, saveMerchantProfile } from '../services/accounting';
+import React, { useState, useEffect, useRef } from 'react';
+import { Transaction, BusinessId } from '../types';
+import { useFinance } from '../contexts/FinanceContext';
+import { useAuth } from '../contexts/AuthContext';
+import { applyRules, checkDuplicate } from '../services/accounting';
 import { geminiService } from '../services/geminiService';
 import { CategorySelect } from './CategorySelect';
-import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank } from 'lucide-react';
+import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank, Clock } from 'lucide-react';
 
 // --- HELPER COMPONENTS ---
 
 const OpeningBalanceModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { postBatchOpeningEntry } = useFinance();
   const [date, setDate] = useState('2024-01-01');
   const [balances, setBalances] = useState<{ [key in BusinessId]: string }>({
     'Big Sky FPV': '',
     'TRL Band': ''
   });
 
-  const handleSave = () => {
+  const handleSave = async () => {
     let count = 0;
     try {
+      const batchData: { accountId: string, amount: number }[] = [];
       Object.entries(balances).forEach(([biz, amountStr]) => {
         const amount = parseFloat(amountStr as string);
         if (!isNaN(amount) && amount !== 0) {
-          postOpeningBalance(biz as BusinessId, amount, date);
+          const accountId = biz === 'Big Sky FPV' ? '1000' : '1001'; 
+          batchData.push({ accountId, amount });
           count++;
         }
       });
+      await postBatchOpeningEntry(date, batchData);
       alert(`Posted ${count} opening balance entries.`);
       onClose();
     } catch (e: any) {
@@ -86,15 +92,16 @@ const OpeningBalanceModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
 
 interface TransactionRowProps {
   item: Transaction;
-  accounts: Account[];
   onUpdate: (id: string, field: keyof Transaction, value: any) => void;
   onPost: (tx: Transaction) => void;
 }
 
-const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdate, onPost }) => {
+const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost }) => {
+  const { accounts, projects, contractors } = useFinance();
   const isPosted = item.status === 'posted';
   const isExpense = item.amount < 0;
   const isTransfer = item.transactionType === 'transfer';
+  const isPending = item.pending;
 
   // Check if selected account is Labor/Contractor related
   const selectedAccount = accounts.find(a => a.id === item.assignedAccount);
@@ -114,6 +121,13 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
         <div className="flex-1 min-w-[200px]">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-mono text-slate-500">{item.date}</span>
+            
+            {/* STATUS BADGES */}
+            {isPending && !isPosted && (
+                <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 animate-pulse">
+                    <Clock size={10} /> Pending
+                </span>
+            )}
             {item.isDuplicate && item.status !== 'posted' && (
               <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                 <AlertTriangle size={10} /> Duplicate?
@@ -148,7 +162,6 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
             {/* Task 1: Type Switcher */}
             <div className="flex bg-slate-100 rounded-lg p-1 h-[38px] items-center">
                 {(['income', 'expense', 'transfer'] as const).map(t => {
-                   // Hide Income/Expense mismatch to prevent user error? Or just allow override? Allow override.
                    return (
                      <button
                         key={t}
@@ -215,7 +228,7 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
                 onChange={(e) => onUpdate(item.id, 'assignedProject', e.target.value)}
               >
                 <option value="">{isDirectCost ? 'Project Required *' : 'No Project'}</option>
-                {mockProjects
+                {projects
                   .filter(p => !item.assignedBusiness || p.businessId === item.assignedBusiness)
                   .map(p => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -233,7 +246,7 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
                   onChange={(e) => onUpdate(item.id, 'assignedContractorId', e.target.value)}
                 >
                   <option value="">Select Contractor...</option>
-                  {mockContractors.map(c => (
+                  {contractors.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
@@ -270,15 +283,27 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
               >
                 <Split size={18} />
               </button>
-              <button 
-                onClick={() => onPost(item)}
-                disabled={!isValid}
-                className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-all font-medium shadow-sm text-sm whitespace-nowrap ${
-                    isValid ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-200' : 'bg-slate-300 cursor-not-allowed'
-                }`}
-              >
-                Approve <ArrowRight size={14} />
-              </button>
+              
+              {/* PENDING GUARD: Disable Post if Pending */}
+              {isPending ? (
+                  <button 
+                    disabled
+                    className="flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-600 rounded-lg transition-all font-medium text-sm whitespace-nowrap cursor-not-allowed border border-amber-200"
+                    title="Cannot post pending transactions"
+                  >
+                    <Clock size={14} /> Pending
+                  </button>
+              ) : (
+                  <button 
+                    onClick={() => onPost(item)}
+                    disabled={!isValid}
+                    className={`flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-all font-medium shadow-sm text-sm whitespace-nowrap ${
+                        isValid ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-200' : 'bg-slate-300 cursor-not-allowed'
+                    }`}
+                  >
+                    Approve <ArrowRight size={14} />
+                  </button>
+              )}
             </>
           )}
         </div>
@@ -288,7 +313,8 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, accounts, onUpdat
 };
 
 export const Inbox: React.FC = () => {
-  const [inboxItems, setInboxItems] = useState<Transaction[]>([]);
+  const { inbox, accounts, updateTransaction, postJournalEntry, addTransactionToInbox } = useFinance();
+  
   const [filter, setFilter] = useState<'all' | 'imported' | 'posted'>('imported');
   const [showOpeningBalance, setShowOpeningBalance] = useState(false);
   
@@ -300,25 +326,17 @@ export const Inbox: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize with rules and duplicates
-  useEffect(() => {
-    const initialized = mockInbox.map(item => {
-      const suggestions = applyRules(item);
-      const isDup = checkDuplicate(item);
-      return { ...item, ...suggestions, isDuplicate: isDup };
-    });
-    setInboxItems(initialized);
-  }, []);
-
-  const handleUpdate = (id: string, field: keyof Transaction, value: any) => {
-    setInboxItems(prev => prev.map(item => 
-      item.id === id ? { ...item, [field]: value } : item
-    ));
+  const handleUpdate = async (id: string, field: keyof Transaction, value: any) => {
+    await updateTransaction(id, { [field]: value });
   };
 
-  const handlePost = (tx: Transaction) => {
+  const handlePost = async (tx: Transaction) => {
+    if (tx.pending) {
+        alert("Cannot post pending transactions. Please wait for them to clear.");
+        return;
+    }
+    
     try {
-      // Basic Validation is done in Row, but double check here
       if (tx.transactionType === 'transfer') {
           if (!tx.transferAccountId) {
               alert("Please select a transfer destination account.");
@@ -335,27 +353,21 @@ export const Inbox: React.FC = () => {
         alert("Please assign a business.");
         return;
       }
-      const selectedAccount = mockAccounts.find(a => a.id === tx.assignedAccount);
+      const selectedAccount = accounts.find(a => a.id === tx.assignedAccount);
       if (selectedAccount?.type === 'Cost of Services' && !tx.assignedProject) {
         alert(`Validation Error: ${selectedAccount.name} is a Direct Cost. You MUST assign a Project/Gig.`);
         return;
       }
 
-      // Accounting Constitution v1.0: Asset Threshold Check
       if (Math.abs(tx.amount) > 2500 && (selectedAccount?.type === 'Expense' || selectedAccount?.type === 'Cost of Services')) {
         const confirmAsset = confirm(
           `⚠️ ASSET WARNING\n\nThis transaction is $${Math.abs(tx.amount).toLocaleString()}, which exceeds the $2,500 threshold.\n\nYou have categorized it as '${selectedAccount.name}' (${selectedAccount.type}).\n\nShould this be capitalized as a Fixed Asset instead?`
         );
-        if (!confirmAsset) {
-            // User hit cancel, meaning they WANT to change it. Stop the post.
-            return; 
-        }
+        if (!confirmAsset) return; 
       }
 
-      const je = postTransactionToLedger(tx);
-      setInboxItems(prev => prev.map(item => 
-        item.id === tx.id ? { ...item, status: 'posted', linkedJournalEntryId: je.id } : item
-      ));
+      const id = await postJournalEntry(tx);
+      await updateTransaction(tx.id, { status: 'posted', linkedJournalEntryId: id });
     } catch (e: any) {
       console.error(e);
       alert(`Error: ${e.message}`);
@@ -373,10 +385,8 @@ export const Inbox: React.FC = () => {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-        // Basic CSV parse (handling quotes roughly)
         const parsed = lines.slice(0, 5).map(line => line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.replace(/"/g, '')));
         setCsvPreview(parsed);
-        // Try auto-map
         if (parsed.length > 0) {
            const headers = parsed[0].map(h => h.toLowerCase());
            setMapping({
@@ -402,9 +412,8 @@ export const Inbox: React.FC = () => {
       const text = event.target?.result as string;
       const lines = text.split('\n').map(l => l.trim()).filter(l => l);
       
-      const newTransactions: Transaction[] = [];
+      let count = 0;
       
-      // Start loop (skip header if mapped index matches header row, assuming row 0 is header)
       for (let i = 1; i < lines.length; i++) {
         const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(c => c.trim().replace(/"/g, ''));
         if (row.length <= Math.max(mapping.date, mapping.amount)) continue;
@@ -415,12 +424,9 @@ export const Inbox: React.FC = () => {
 
         if (!dateStr || !amountStr) continue;
 
-        // Parse Amount (clean currency symbols)
         const amount = parseFloat(amountStr.replace(/[^0-9.-]/g, ''));
         if (isNaN(amount)) continue;
 
-        // Parse Date (Attempt standard ISO, or MM/DD/YYYY)
-        // Simple heuristic: if it contains '/', assume MM/DD/YYYY and convert to YYYY-MM-DD
         let isoDate = dateStr;
         if (dateStr.includes('/')) {
             const parts = dateStr.split('/');
@@ -429,28 +435,19 @@ export const Inbox: React.FC = () => {
 
         const isExpense = amount < 0;
 
-        const tx: Transaction = {
-          id: `imp-${Date.now()}-${i}`,
+        const tx: Omit<Transaction, 'id' | 'userId' | 'createdAt' | 'updatedAt'> = {
           date: isoDate,
           description: descStr || 'Unknown',
           amount: amount, 
           bankAccountId: '1000',
           status: 'imported',
-          transactionType: isExpense ? 'expense' : 'income'
+          transactionType: isExpense ? 'expense' : 'income',
+          pending: false // CSV imports are usually settled
         };
 
-        // Deduplication
-        const isDup = checkDuplicate(tx) || inboxItems.some(item => 
-            item.date === tx.date && item.amount === tx.amount && item.description === tx.description
-        );
-        
-        if (isDup) continue;
-
-        // Task 2 & 1: Apply Rules & Merchant Memory & Transfer Detection
-        const ruleSuggestions = applyRules(tx);
+        const ruleSuggestions = applyRules(tx as Transaction);
         let finalTx = { ...tx, ...ruleSuggestions };
 
-        // AI Categorization (Only if Merchant Memory didn't catch it and it's NOT a transfer)
         if (!finalTx.assignedAccount && finalTx.transactionType !== 'transfer') {
             try {
                 const aiResult = await geminiService.categorizeTransaction(tx.description, tx.amount);
@@ -458,23 +455,23 @@ export const Inbox: React.FC = () => {
                 finalTx.isContractor = aiResult.isContractor;
                 finalTx.aiConfidence = aiResult.confidence;
             } catch (err) {
-                console.warn("AI skipped for", tx.id);
+                console.warn("AI skipped");
             }
         }
 
-        newTransactions.push(finalTx);
+        await addTransactionToInbox(finalTx);
+        count++;
       }
 
-      setInboxItems(prev => [...newTransactions, ...prev]);
       setIsProcessing(false);
       setIsUploading(false);
       setCsvFile(null);
-      alert(`Imported ${newTransactions.length} transactions.`);
+      alert(`Imported ${count} transactions.`);
     };
     reader.readAsText(csvFile);
   };
 
-  const visibleItems = inboxItems.filter(item => filter === 'all' || item.status === filter);
+  const visibleItems = inbox.filter(item => filter === 'all' || item.status === filter);
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -602,7 +599,7 @@ export const Inbox: React.FC = () => {
           </div>
         ) : (
           visibleItems.map(item => (
-            <TransactionRow key={item.id} item={item} accounts={mockAccounts} onUpdate={handleUpdate} onPost={handlePost} />
+            <TransactionRow key={item.id} item={item} onUpdate={handleUpdate} onPost={handlePost} />
           ))
         )}
       </div>

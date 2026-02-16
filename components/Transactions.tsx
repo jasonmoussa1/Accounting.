@@ -1,26 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Transaction } from '../types';
-import { geminiService } from '../services/geminiService';
-import { mockJournal, mockInbox } from '../services/accounting';
-import { syncPlaidToInbox } from '../services/plaidService';
+import { syncTransactions } from '../services/plaidService';
 import { Search, Filter, RefreshCw, Download, User, Sparkles, PlusCircle } from 'lucide-react';
 import { BankConnect } from './BankConnect';
+import { useFinance } from '../contexts/FinanceContext';
+import { useAuth } from '../contexts/AuthContext';
 
 export const Transactions: React.FC = () => {
+  const { journal, inbox, addTransactionToInbox } = useFinance();
+  const { currentUser } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
-  // Force re-render after sync
-  const [lastUpdated, setLastUpdated] = useState(Date.now()); 
 
-  // Day Zero: We only want to show actual data from our "database" (mockJournal), not hardcoded UI placeholders
   // Convert posted Journal Entries to Transaction view
-  const postedTransactions: Transaction[] = mockJournal.map(je => {
+  const postedTransactions: Transaction[] = useMemo(() => journal.map(je => {
      // Identify the primary line vs the bank line
      const mainLine = je.lines.find(l => l.accountId !== '1000' && l.accountId !== '3001') || je.lines[0];
      const isIncome = mainLine.credit > 0;
      return {
          id: je.id,
+         userId: je.userId,
          date: je.date,
          description: je.description,
          category: 'Posted Entry', // Simplification for view
@@ -28,17 +28,28 @@ export const Transactions: React.FC = () => {
          transactionType: isIncome ? 'income' : 'expense',
          status: 'posted',
          bankAccountId: '1000'
-     };
-  });
+     } as Transaction;
+  }), [journal]);
 
-  const allTransactions = [...mockInbox, ...postedTransactions];
+  const allTransactions = [...inbox, ...postedTransactions];
 
   const handleSync = async () => {
+    if (!currentUser) return;
     setIsSyncing(true);
     try {
-      const count = await syncPlaidToInbox();
-      setLastUpdated(Date.now());
-      if (count > 0) alert(`Synced ${count} new transactions!`);
+      const newTxs = await syncTransactions(currentUser.uid);
+      // Filter out existing ones by ID (simple client side check)
+      const existingIds = new Set(inbox.map(t => t.plaidTransactionId));
+      const uniqueNew = newTxs.filter(t => !t.plaidTransactionId || !existingIds.has(t.plaidTransactionId));
+      
+      for (const tx of uniqueNew) {
+          // Destructure to remove ID so Firestore assigns a new one? Or keep the one generated?
+          // addTransactionToInbox expects Omit<Transaction, 'id' | 'userId'>
+          const { id, userId, ...payload } = tx;
+          await addTransactionToInbox(payload);
+      }
+      
+      if (uniqueNew.length > 0) alert(`Synced ${uniqueNew.length} new transactions!`);
       else alert("No new transactions found.");
     } catch (e) {
       alert("Sync failed.");
@@ -62,10 +73,7 @@ export const Transactions: React.FC = () => {
         {/* Bank Connection Widget */}
         <div className="w-full md:w-80">
             {showConnect ? (
-                <BankConnect onSyncComplete={() => {
-                    setLastUpdated(Date.now());
-                    setShowConnect(false);
-                }} />
+                <BankConnect onSyncComplete={handleSync} />
             ) : (
                 <div className="flex gap-2 justify-end">
                     <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">

@@ -24,7 +24,23 @@ export interface SplitLine {
   contractorId?: string;
 }
 
-export interface Transaction {
+// Base interface for all Firestore documents
+export interface FirestoreEntity {
+  userId: string; // Security enforcement
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BankConnection extends FirestoreEntity {
+  id: string;
+  institutionId: string;
+  institutionName: string;
+  itemId: string; // Plaid Item ID
+  status: 'active' | 'error' | 'disconnected';
+  lastSync: string;
+}
+
+export interface Transaction extends FirestoreEntity {
   id: string;
   date: string;
   description: string;
@@ -32,39 +48,32 @@ export interface Transaction {
   bankAccountId: string; // The source asset account (e.g., Checking)
   status: 'imported' | 'posted' | 'reconciled';
   
-  // New Type Logic (Task 1)
   transactionType: 'income' | 'expense' | 'transfer';
-  transferAccountId?: string; // If transfer, which account is on the other side?
+  transferAccountId?: string; 
 
-  // Plaid Integration Fields
   plaidTransactionId?: string;
   plaidAccountId?: string;
   merchantName?: string;
-  pending?: boolean;
+  pending: boolean;
 
-  // Staging fields (used in Inbox before posting)
-  assignedAccount?: string; // The target expense/income account
+  assignedAccount?: string;
   assignedBusiness?: BusinessId;
   assignedProject?: string;
-  assignedContractorId?: string; // Staging for contractor
+  assignedContractorId?: string; 
   splits?: SplitLine[];
   
-  // Link to the real ledger
   linkedJournalEntryId?: string;
   
-  // Metadata
   isDuplicate?: boolean;
   aiConfidence?: number;
-  category?: string; // Legacy field for display
+  category?: string; 
   isContractor?: boolean;
   merchant?: string;
 }
 
-// --- New Double-Entry Types ---
-
 export type AccountType = 'Asset' | 'Liability' | 'Equity' | 'Income' | 'Cost of Services' | 'Expense';
 
-export interface Account {
+export interface Account extends FirestoreEntity {
   id: string;
   code: string;
   name: string;
@@ -72,6 +81,7 @@ export interface Account {
   parentId?: string;
   status?: 'active' | 'archived';
   description?: string;
+  plaidAccountId?: string; 
 }
 
 export interface JournalLine {
@@ -79,59 +89,46 @@ export interface JournalLine {
   description?: string;
   debit: number;
   credit: number;
-  contractorId?: string; // Link to contractor
-  
-  // Reconciliation Fields (Task 1)
+  contractorId?: string;
   isCleared?: boolean;
   clearedAt?: string;
   reconciliationId?: string;
 }
 
-export interface JournalEntry {
+export interface JournalEntry extends FirestoreEntity {
   id: string;
   date: string;
   description: string;
   businessId: BusinessId;
-  projectId?: string; // Optional link to specific gig
+  projectId?: string; 
   lines: JournalLine[];
-  createdAt: string;
   
-  // Immutability Fields (Task 2)
-  isAdjustingEntry?: boolean; // AJE
+  // Immutability / AJE Fields
+  isAdjustingEntry?: boolean; 
   adjustmentReason?: string;
+  originalJournalEntryId?: string; // Reference to the entry this reverses/corrects
 }
 
-export interface Reconciliation {
+export interface Reconciliation extends FirestoreEntity {
   id: string;
-  businessId: BusinessId; // Task 1: Added businessId
+  businessId: BusinessId;
   accountId: string;
   statementEndDate: string;
   statementBalance: number;
-  clearedLineIds: string[]; // List of JournalLine IDs (format: entryId-lineIndex)
+  clearedLineIds: string[]; 
   isLocked: boolean;
-  createdAt: string;
   performedBy: string;
 }
 
-export interface AuditEvent {
+export interface AuditEvent extends FirestoreEntity {
   id: string;
   timestamp: string;
-  action: 'LOCK_PERIOD' | 'CREATE_AJE' | 'EDIT_ATTEMPT';
+  action: 'LOCK_PERIOD' | 'CREATE_AJE' | 'EDIT_ATTEMPT' | 'INVOICE_CREATE' | 'INVOICE_PAYMENT';
   details: string;
   user: string;
 }
 
-export interface BankRule {
-  id: string;
-  contains: string;
-  assignBusiness: BusinessId;
-  assignAccount: string; // ID from CoA
-  assignProject?: string;
-}
-
-// --- Project Types ---
-
-export interface Project {
+export interface Project extends FirestoreEntity {
   id: string;
   name: string;
   businessId: BusinessId;
@@ -141,9 +138,9 @@ export interface Project {
   description?: string;
 }
 
-export interface Contractor {
+export interface Contractor extends FirestoreEntity {
   id: string;
-  name: string; // Display Name
+  name: string; 
   legalName: string;
   dba?: string;
   email: string;
@@ -159,19 +156,43 @@ export interface Contractor {
   notes?: string;
 }
 
-export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'overdue';
+export type InvoiceStatus = 'draft' | 'sent' | 'partial' | 'paid' | 'overdue';
 
 export interface InvoiceItem {
   id: string;
-  serviceItemId?: string; // Link to catalog
+  serviceItemId?: string; 
   description: string;
   quantity: number;
   rate: number;
+  // REMOVED TAX FIELDS
 }
 
-export interface Customer {
+export interface Invoice extends FirestoreEntity {
   id: string;
-  name: string; // Company Name
+  invoiceNumber: string;
+  customerId: string;
+  businessId: BusinessId;
+  dateIssued: string;
+  dueDate: string;
+  items: InvoiceItem[];
+  totalAmount: number;
+  amountPaid: number;
+  status: InvoiceStatus;
+  logoUrl?: string;
+}
+
+export interface InvoicePayment extends FirestoreEntity {
+  id: string;
+  invoiceId: string;
+  date: string;
+  amount: number;
+  method: 'Check' | 'Credit Card' | 'Bank Transfer' | 'Cash';
+  linkedJournalEntryId: string;
+}
+
+export interface Customer extends FirestoreEntity {
+  id: string;
+  name: string; 
   contactPerson?: string;
   email: string;
   address: string;
@@ -182,20 +203,19 @@ export interface Customer {
   notes?: string;
 }
 
-export interface ServiceItem {
+export interface ServiceItem extends FirestoreEntity {
   id: string;
   name: string;
   description: string;
   rate: number;
   unit: 'Hour' | 'Day' | 'Flat Fee' | 'Item';
-  linkedAccountId: string; // Income account
+  linkedAccountId: string; 
   defaultBusiness?: BusinessId;
 }
 
-// Task 2: Merchant Profiles
-export interface MerchantProfile {
+export interface MerchantProfile extends FirestoreEntity {
   id: string;
-  merchantName: string; // Normalized name (e.g., "Home Depot" from "HOME DEPOT #4829")
+  merchantName: string;
   defaultBusiness?: BusinessId;
   defaultAccount?: string;
   defaultProject?: string;
@@ -208,4 +228,11 @@ export interface MetricCardProps {
   trend?: string;
   trendUp?: boolean;
   type: 'neutral' | 'positive' | 'negative' | 'warning';
+}
+
+export interface SystemSettings extends FirestoreEntity {
+    id: string;
+    schemaVersion: string;
+    lastUpdatedAt: string;
+    organizationName: string;
 }

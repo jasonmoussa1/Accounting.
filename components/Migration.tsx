@@ -123,6 +123,7 @@ export const Migration: React.FC = () => {
 
         parsedTransactions.push({
           id: `import-${Date.now()}-${i}`,
+          userId: 'migration_preview', // Placeholder for preview
           date: formattedDate,
           description: description,
           category: category,
@@ -130,7 +131,8 @@ export const Migration: React.FC = () => {
           transactionType: amount < 0 ? 'expense' : (category === 'Income' ? 'income' : 'expense'),
           status: 'posted',
           merchant: name,
-          bankAccountId: '1000'
+          bankAccountId: '1000',
+          pending: false
         });
       }
 

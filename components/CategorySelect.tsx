@@ -1,7 +1,6 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, AccountType } from '../types';
-import { mockAccounts, addAccount } from '../services/accounting';
+import { useFinance } from '../contexts/FinanceContext';
 import { Search, Plus, ChevronDown, Check, Tag, FolderTree } from 'lucide-react';
 
 interface CategorySelectProps {
@@ -10,7 +9,19 @@ interface CategorySelectProps {
   className?: string;
 }
 
+interface GroupedOption {
+  type: AccountType;
+  roots: {
+    account: Account;
+    children: {
+      account: Account;
+      children: Account[];
+    }[];
+  }[];
+}
+
 export const CategorySelect: React.FC<CategorySelectProps> = ({ value, onChange, className }) => {
+  const { accounts, addAccount } = useFinance();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -18,8 +29,8 @@ export const CategorySelect: React.FC<CategorySelectProps> = ({ value, onChange,
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selectedAccount = mockAccounts.find(a => a.id === value);
-  const activeAccounts = useMemo(() => mockAccounts.filter(a => a.status !== 'archived'), [mockAccounts.length]);
+  const selectedAccount = accounts.find(a => a.id === value);
+  const activeAccounts = useMemo(() => accounts.filter(a => a.status !== 'archived'), [accounts]);
 
   // Click outside listener
   useEffect(() => {
@@ -38,9 +49,9 @@ export const CategorySelect: React.FC<CategorySelectProps> = ({ value, onChange,
   }, [searchTerm, activeAccounts]);
 
   // Grouping logic for display
-  const groupedOptions = useMemo(() => {
+  const groupedOptions = useMemo<GroupedOption[]>(() => {
     const types: AccountType[] = ['Cost of Services', 'Expense', 'Asset', 'Liability', 'Equity', 'Income'];
-    const groups: { type: AccountType, roots: { account: Account, children: { account: Account, children: Account[] }[] }[] }[] = [];
+    const groups: GroupedOption[] = [];
 
     types.forEach(type => {
       const roots = filteredAccounts.filter(a => a.type === type && !a.parentId);
@@ -82,13 +93,13 @@ export const CategorySelect: React.FC<CategorySelectProps> = ({ value, onChange,
     setIsOpen(false);
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     try {
       if (!newCategoryParent) {
         alert("Please select a parent category.");
         return;
       }
-      const newAcc = addAccount(newCategoryName, newCategoryParent);
+      const newAcc = await addAccount(newCategoryName, newCategoryParent);
       onChange(newAcc.id);
       setShowAddModal(false);
       setSearchTerm('');
@@ -243,7 +254,7 @@ export const CategorySelect: React.FC<CategorySelectProps> = ({ value, onChange,
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
                  </div>
                  <p className="text-xs text-slate-400 mt-1">
-                   New category will inherit type <strong>{mockAccounts.find(a => a.id === newCategoryParent)?.type || '...'}</strong>
+                   New category will inherit type <strong>{accounts.find(a => a.id === newCategoryParent)?.type || '...'}</strong>
                  </p>
                </div>
              </div>

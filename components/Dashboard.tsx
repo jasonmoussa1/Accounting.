@@ -1,8 +1,9 @@
 
 import React, { useMemo } from 'react';
-import { Transaction, MetricCardProps } from '../types';
+import { MetricCardProps } from '../types';
 import { getDashboardMetrics } from '../services/accounting';
-import { ArrowUpRight, ArrowDownRight, DollarSign, Wallet, TrendingUp, MoreHorizontal, AlertCircle, AlertTriangle, CreditCard, Scale, CheckCircle2, Clock, AlertOctagon, PiggyBank } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
+import { ArrowUpRight, ArrowDownRight, Wallet, AlertCircle, AlertTriangle, CreditCard, Scale, AlertOctagon, PiggyBank, Loader2, TrendingUp } from 'lucide-react';
 
 const MetricCard: React.FC<MetricCardProps> = ({ title, value, trend, trendUp, type }) => {
   const getIcon = () => {
@@ -46,8 +47,22 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, trend, trendUp, t
 };
 
 export const Dashboard: React.FC = () => {
-  // Real-time metrics
-  const { revenue, expenses, profit, ownerDraw, recentActivity, needsReviewCount, totalCash, totalDebt, reconciliations } = useMemo(() => getDashboardMetrics(), []);
+  // Use Context hook to get REAL data
+  const { journal, accounts, inbox, reconciliations, loading } = useFinance();
+
+  // Recalculate metrics when data changes
+  const { revenue, profit, ownerDraw, recentActivity, needsReviewCount, totalCash, totalDebt, reconciliations: recStats } = useMemo(() => {
+     if (loading) return { revenue: 0, profit: 0, ownerDraw: 0, recentActivity: [], needsReviewCount: 0, totalCash: 0, totalDebt: 0, reconciliations: [] };
+     return getDashboardMetrics(journal, accounts, inbox, reconciliations);
+  }, [journal, accounts, inbox, reconciliations, loading]);
+
+  if (loading) {
+      return (
+          <div className="flex h-full items-center justify-center">
+              <Loader2 className="animate-spin text-indigo-600" size={32} />
+          </div>
+      );
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
@@ -145,9 +160,9 @@ export const Dashboard: React.FC = () => {
                         </span>
                     </td>
                     <td className={`px-6 py-4 text-right font-medium ${
-                        tx.type === 'income' ? 'text-emerald-600' : 'text-slate-900'
+                        tx.transactionType === 'income' ? 'text-emerald-600' : 'text-slate-900'
                     }`}>
-                        {tx.type === 'income' ? '+' : '-'}${tx.amount.toFixed(2)}
+                        {tx.transactionType === 'income' ? '+' : '-'}${Math.abs(tx.amount).toFixed(2)}
                     </td>
                     </tr>
                 )) : (
@@ -173,7 +188,7 @@ export const Dashboard: React.FC = () => {
                     <Scale size={18} className="text-indigo-600" /> Reconciliation Clock
                 </h3>
                 <div className="space-y-4">
-                    {reconciliations && reconciliations.length > 0 ? reconciliations.map((rec, idx) => {
+                    {recStats && recStats.length > 0 ? recStats.map((rec, idx) => {
                         const isOverdue = rec.daysAgo > 45;
                         return (
                             <div key={idx} className={`flex items-center justify-between p-3 rounded-lg border transition-all ${

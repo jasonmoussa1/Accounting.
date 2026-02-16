@@ -1,127 +1,96 @@
+
 import { Transaction } from '../types';
-import { mockInbox, mockJournal, applyRules } from './accounting';
+import { applyRules } from './accounting';
 
-// This file simulates the server-side logic that would normally run in a Cloud Function.
-// It returns MOCK data to ensure the UI renders without needing a real backend or API keys.
+// PLAID SERVICE (Production Ready Architecture)
+// Note: In a real deployment, the API calls below would point to your Firebase Cloud Functions.
+// For this environment, we mock the network response but keep the logic structure correct.
 
-interface PlaidTransaction {
-  transaction_id: string;
-  account_id: string;
-  amount: number; // Plaid: Positive = Expense, Negative = Deposit
-  date: string;
-  name: string;
-  merchant_name: string | null;
-  pending: boolean;
-  category: string[] | null;
-}
+const API_BASE = '/api/plaid'; // Hypothetical Backend Endpoint
 
-// Mock Plaid API Response
-const mockPlaidResponse: PlaidTransaction[] = [
-  {
-    transaction_id: 'plaid_tx_1',
-    account_id: 'acc_checking',
-    amount: 120.50, // Expense
-    date: new Date().toISOString().split('T')[0],
-    name: 'Exxon Mobil',
-    merchant_name: 'Exxon Mobil',
-    pending: false,
-    category: ['Travel', 'Gas Stations']
-  },
-  {
-    transaction_id: 'plaid_tx_2',
-    account_id: 'acc_checking',
-    amount: 54.99, // Expense
-    date: new Date().toISOString().split('T')[0],
-    name: 'Adobe *Creative Cloud',
-    merchant_name: 'Adobe',
-    pending: false,
-    category: ['Service', 'Computers', 'Software']
-  },
-  {
-    transaction_id: 'plaid_tx_3',
-    account_id: 'acc_checking',
-    amount: -2500.00, // Deposit
-    date: new Date().toISOString().split('T')[0],
-    name: 'Deposit - Red Bull Media',
-    merchant_name: null,
-    pending: false,
-    category: ['Transfer', 'Deposit']
-  },
-  {
-    transaction_id: 'plaid_tx_4',
-    account_id: 'acc_checking',
-    amount: 14.00,
-    date: new Date(Date.now() - 86400000).toISOString().split('T')[0], // Yesterday
-    name: 'Chick-fil-A',
-    merchant_name: 'Chick-fil-A',
-    pending: false,
-    category: ['Food and Drink', 'Fast Food']
-  }
-];
+export const createLinkToken = async (userId: string): Promise<string> => {
+  console.log(`[Plaid] Requesting Link Token for user ${userId}...`);
+  
+  // REAL ARCHITECTURE:
+  // const response = await fetch(`${API_BASE}/create_link_token`, { 
+  //   method: 'POST', body: JSON.stringify({ userId }) 
+  // });
+  // const data = await response.json();
+  // return data.link_token;
 
-export const fetchPlaidTransactions = async (accessToken: string, startDate: string, endDate: string): Promise<Transaction[]> => {
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 800));
-
-  const plaidTransactions = mockPlaidResponse;
-  const processedTransactions: Transaction[] = [];
-
-  for (const pt of plaidTransactions) {
-    // 1. DUPLICATE CHECK
-    const existsInInbox = mockInbox.some(t => t.plaidTransactionId === pt.transaction_id);
-    const existsInLedger = mockJournal.some(je => false); // Simplified for demo
-
-    if (existsInInbox || existsInLedger) {
-      console.log(`[Server] Skipping duplicate: ${pt.transaction_id}`);
-      continue;
-    }
-
-    // 2. MAPPING LOGIC
-    // Plaid: + is Money Out. JasonOS: - is Money Out (Expense).
-    // Plaid: - is Money In. JasonOS: + is Money In (Income).
-    const jasonAmount = pt.amount * -1;
-    
-    // Basic Category Guess based on Plaid taxonomy
-    let legacyCategory = 'Uncategorized';
-    if (pt.category) {
-      if (pt.category.includes('Gas Stations')) legacyCategory = 'Gas';
-      if (pt.category.includes('Food and Drink')) legacyCategory = 'Meals';
-      if (pt.category.includes('Software')) legacyCategory = 'Software';
-    }
-
-    const newTx: Transaction = {
-      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      date: pt.date,
-      description: pt.name,
-      merchant: pt.merchant_name || pt.name,
-      amount: jasonAmount,
-      bankAccountId: '1000',
-      status: 'imported',
-      transactionType: jasonAmount > 0 ? 'income' : 'expense',
-      category: legacyCategory,
-      plaidTransactionId: pt.transaction_id,
-      plaidAccountId: pt.account_id,
-      pending: pt.pending,
-      isDuplicate: false,
-    };
-
-    // 3. APPLY RULES ENGINE (Auto-Tagging)
-    const suggestions = applyRules(newTx);
-    const enrichedTx = { ...newTx, ...suggestions };
-
-    processedTransactions.push(enrichedTx);
-  }
-
-  return processedTransactions;
+  // SIMULATION:
+  await new Promise(resolve => setTimeout(resolve, 500));
+  return "link-sandbox-" + Math.random().toString(36).substring(7);
 };
 
-export const syncPlaidToInbox = async (): Promise<number> => {
-  const newTxs = await fetchPlaidTransactions('mock-token', '2023-10-01', '2023-10-31');
+export const exchangePublicToken = async (userId: string, publicToken: string, metadata: any) => {
+  console.log(`[Plaid] Exchanging Public Token: ${publicToken}`);
   
-  // Mutate the mockInbox (Simulating DB Write)
-  newTxs.forEach(tx => {
-    mockInbox.unshift(tx);
-  });
+  // REAL ARCHITECTURE:
+  // This sends the public_token to the backend. The backend swaps it for an access_token
+  // and stores it securely in Firestore/Secret Manager. It NEVER returns the access_token to the client.
+  // await fetch(`${API_BASE}/exchange_public_token`, { 
+  //   method: 'POST', body: JSON.stringify({ userId, publicToken, metadata }) 
+  // });
 
-  return newTxs.length;
+  // SIMULATION:
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  return { success: true, itemId: "item_" + Math.random() };
+};
+
+export const syncTransactions = async (userId: string): Promise<Transaction[]> => {
+  console.log(`[Plaid] Syncing transactions for user ${userId}...`);
+
+  // REAL ARCHITECTURE:
+  // Calls the backend to use the stored access_token to fetch /transactions/sync from Plaid.
+  // The backend processes pending/posted logic and returns clean data.
+  // const response = await fetch(`${API_BASE}/sync_transactions`, { method: 'POST', ... });
+  // return await response.json();
+
+  // SIMULATION: Return realistic "Live" data including Pending items
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  return [
+    {
+        id: 'tx_pending_1',
+        userId,
+        date: new Date().toISOString().split('T')[0],
+        description: 'Uber *Pending',
+        amount: -24.50,
+        bankAccountId: '1000',
+        status: 'imported',
+        transactionType: 'expense',
+        pending: true,
+        merchantName: 'Uber',
+        category: 'Travel'
+    },
+    {
+        id: 'tx_posted_1',
+        userId,
+        date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        description: 'Home Depot #4402',
+        amount: -145.22,
+        bankAccountId: '1000',
+        status: 'imported',
+        transactionType: 'expense',
+        pending: false, // Cleared
+        merchantName: 'Home Depot',
+        category: 'Supplies',
+        plaidTransactionId: 'plaid_id_12345' // Critical for dedupe
+    },
+    {
+        id: 'tx_posted_2',
+        userId,
+        date: new Date(Date.now() - 172800000).toISOString().split('T')[0],
+        description: 'Client Deposit - Stripe',
+        amount: 4500.00,
+        bankAccountId: '1000',
+        status: 'imported',
+        transactionType: 'income',
+        pending: false,
+        merchantName: 'Stripe',
+        category: 'Income',
+        plaidTransactionId: 'plaid_id_67890'
+    }
+  ];
 };
