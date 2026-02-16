@@ -24,8 +24,12 @@ export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'las
     const end = new Date(year, quarter * 3 + 3, 0);
     return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
   }
-  if (range === 'year' || range === 'ytd') {
-    // Current Calendar Year
+  if (range === 'ytd') {
+    // Current Calendar Year to TODAY (Task 3)
+    return { start: `${year}-01-01`, end: now.toISOString().split('T')[0] };
+  }
+  if (range === 'year') {
+    // Full Calendar Year
     return { start: `${year}-01-01`, end: `${year}-12-31` };
   }
   if (range === 'lastYear') {
@@ -61,6 +65,9 @@ export const generateProfitAndLoss = (
   end: string, 
   businessId: BusinessId | 'Combined'
 ): PLReport => {
+  // Task 4: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
+
   const report: PLReport = {
     revenue: [],
     cogs: [],
@@ -76,6 +83,7 @@ export const generateProfitAndLoss = (
 
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
+    // Task 5: Combined Logic (Aggregate if 'Combined', else filter)
     if (businessId !== 'Combined' && entry.businessId !== businessId) return;
 
     entry.lines.forEach(line => {
@@ -85,18 +93,19 @@ export const generateProfitAndLoss = (
     });
   });
 
-  accounts.forEach(acc => {
-    const rawBalance = accountTotals.get(acc.id) || 0;
-    
+  // Generate Report Lines
+  accountTotals.forEach((rawBalance, accountId) => {
+    const acc = accountMap.get(accountId);
+    if (!acc) return;
+
     if (acc.type === 'Income') {
-      // Income is Credit Normal (Credit - Debit). Since rawBalance is Debit - Credit, we negate it.
+      // Income is Credit Normal. Negate the (Debit - Credit) raw balance.
       const amount = -rawBalance;
       if (Math.abs(amount) > 0.01) {
         report.revenue.push({ accountId: acc.id, accountName: acc.name, amount });
         report.totalRevenue += amount;
       }
     } else if (acc.type === 'Cost of Services') {
-      // Expense/COGS is Debit Normal
       const amount = rawBalance;
       if (Math.abs(amount) > 0.01) {
         report.cogs.push({ accountId: acc.id, accountName: acc.name, amount });
@@ -135,6 +144,9 @@ export const generateBalanceSheet = (
   asOfDate: string, 
   businessId: BusinessId | 'Combined'
 ): BSReport => {
+  // Task 4: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
+
   const report: BSReport = {
     assets: [],
     liabilities: [],
@@ -153,20 +165,32 @@ export const generateBalanceSheet = (
     if (businessId !== 'Combined' && entry.businessId !== businessId) return;
 
     entry.lines.forEach(line => {
+      // 1. Accumulate Account Balance
       const net = line.debit - line.credit;
       accountTotals.set(line.accountId, (accountTotals.get(line.accountId) || 0) + net);
       
-      // Calculate Net Income Impact for Retained Earnings (Virtual)
-      const acct = accounts.find(a => a.id === line.accountId);
+      // 2. Task 1: Calculate Net Income Impact (Revenue - Expenses)
+      // This calculates "Retained Earnings" or "Current Year Earnings" dynamically
+      const acct = accountMap.get(line.accountId);
       if (acct) {
-        if (acct.type === 'Income') netIncomeYTD += (line.credit - line.debit);
-        if (acct.type === 'Expense' || acct.type === 'Cost of Services') netIncomeYTD -= (line.debit - line.credit);
+        if (acct.type === 'Income') {
+           // Income increases Equity (Credit normal). 
+           // Ledger net is (Debit - Credit). So Income adds (Credit - Debit).
+           netIncomeYTD += (line.credit - line.debit);
+        } else if (acct.type === 'Expense' || acct.type === 'Cost of Services') {
+           // Expense decreases Equity. 
+           // Expense is Debit normal. So Expense reduces Equity by (Debit - Credit).
+           netIncomeYTD -= (line.debit - line.credit);
+        }
       }
     });
   });
 
-  accounts.forEach(acc => {
-    const rawBalance = accountTotals.get(acc.id) || 0;
+  // Build Report Sections
+  accountTotals.forEach((rawBalance, accountId) => {
+    const acc = accountMap.get(accountId);
+    if (!acc) return;
+
     if (acc.type === 'Asset') {
       const amount = rawBalance; // Debit Normal
       if (Math.abs(amount) > 0.01) {
@@ -180,11 +204,8 @@ export const generateBalanceSheet = (
         report.totalLiabilities += amount;
       }
     } else if (acc.type === 'Equity') {
-      let amount = -rawBalance; // Credit Normal
-      // Add YTD Earnings to Retained Earnings for display purposes if checking
-      if (acc.name === 'Retained Earnings') {
-        amount += netIncomeYTD;
-      }
+      const amount = -rawBalance; // Credit Normal
+      // We add existing Equity accounts (Owner's Equity, Capital, etc.)
       if (Math.abs(amount) > 0.01) {
         report.equity.push({ accountId: acc.id, accountName: acc.name, amount });
         report.totalEquity += amount;
@@ -192,13 +213,20 @@ export const generateBalanceSheet = (
     }
   });
 
-  // If Retained Earnings account didn't exist in ledger but we have profit, add a virtual line
-  if (!report.equity.find(e => e.accountName === 'Retained Earnings') && Math.abs(netIncomeYTD) > 0.01) {
-    report.equity.push({ accountId: 'virtual-re', accountName: 'Retained Earnings (YTD)', amount: netIncomeYTD });
+  // Task 1: Add Calculated Earnings Line
+  // This ensures Assets = Liabilities + (Equity + NetIncome)
+  if (Math.abs(netIncomeYTD) > 0.01) {
+    report.equity.push({ 
+        accountId: 'virtual-earnings', 
+        accountName: 'Current Earnings (Calculated)', 
+        amount: netIncomeYTD 
+    });
     report.totalEquity += netIncomeYTD;
   }
 
-  report.isBalanced = Math.abs(report.totalAssets - (report.totalLiabilities + report.totalEquity)) < 1.0;
+  // Task 1: Tighten Tolerance (< 0.01)
+  report.isBalanced = Math.abs(report.totalAssets - (report.totalLiabilities + report.totalEquity)) < 0.01;
+  
   return report;
 };
 
@@ -215,9 +243,27 @@ export const generateCashFlow = (
   journal: JournalEntry[],
   start: string,
   end: string,
-  businessId: BusinessId | 'Combined'
+  businessId: BusinessId | 'Combined',
+  accounts?: Account[] // Optional injected accounts for detection
 ): CashFlowMonth[] => {
   const months = new Map<string, {in: number, out: number}>();
+  
+  // Task 4: Performance Optimization (Create Map if accounts provided)
+  const accountMap = accounts ? new Map(accounts.map(a => [a.id, a])) : new Map();
+
+  // Task 2: Dynamic Bank Detection
+  const isBankAccount = (accountId: string): boolean => {
+      // If we have account data, use it
+      if (accounts) {
+          const acc = accountMap.get(accountId);
+          if (!acc) return false;
+          if (acc.type !== 'Asset') return false;
+          const n = acc.name.toLowerCase();
+          return n.includes('checking') || n.includes('savings') || n.includes('venmo') || n.includes('paypal') || n.includes('cash') || n.includes('bank');
+      }
+      // Fallback (should be avoided by passing accounts)
+      return accountId === '1000' || accountId === '1001';
+  };
   
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
@@ -229,10 +275,8 @@ export const generateCashFlow = (
     const data = months.get(monthKey)!;
 
     entry.lines.forEach(line => {
-      // Heuristic: Track movements in Asset accounts (1000 series) 
-      // Ideally this looks at Bank Accounts specifically, simplified to '1000' checking for now.
-      // Better Logic: Look up account type Asset + name 'Checking'/'Savings'
-      if (line.accountId === '1000' || line.accountId === '1001') { // Checking Accounts
+      // Task 2: Use Dynamic Detection
+      if (isBankAccount(line.accountId)) { 
         if (line.debit > 0) data.in += line.debit;
         if (line.credit > 0) data.out += line.credit;
       }
@@ -252,11 +296,16 @@ export const generateCashFlow = (
 // --- EXPORT ---
 
 export const generateGeneralLedgerCSV = (journal: JournalEntry[], accounts: Account[]): string => {
-  const header = "Date,Business,Account,Description,Debit,Credit,Project\n";
+  // Task 4: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
+
+  const header = "Date,Business,Account Name,Account Code,Description,Debit,Credit,Project\n";
   const rows = journal.flatMap(entry => {
     return entry.lines.map(line => {
-      const acct = accounts.find(a => a.id === line.accountId);
-      return `${entry.date},${entry.businessId},"${acct?.name || line.accountId}","${line.description || entry.description}",${line.debit},${line.credit},${entry.projectId || ''}`;
+      const acct = accountMap.get(line.accountId);
+      // Escape description quotes
+      const safeDesc = (line.description || entry.description).replace(/"/g, '""');
+      return `${entry.date},${entry.businessId},"${acct?.name || line.accountId}",${acct?.code || ''},"${safeDesc}",${line.debit},${line.credit},${entry.projectId || ''}`;
     });
   }).join("\n");
   
