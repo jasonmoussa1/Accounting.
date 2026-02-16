@@ -1,7 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { IRSCategory } from "../types";
-import { mockAccounts } from "./accounting";
+import { Account } from "../types";
 
 export class GeminiService {
   private ai: GoogleGenAI;
@@ -10,10 +9,10 @@ export class GeminiService {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
   }
 
-  async categorizeTransaction(description: string, amount: number): Promise<{ category: string; isContractor: boolean; confidence: number; suggestedAccountId?: string }> {
+  async categorizeTransaction(description: string, amount: number, accounts: Account[]): Promise<{ category: string; isContractor: boolean; confidence: number; suggestedAccountId?: string }> {
     try {
-      // DYNAMICALLY fetch the latest accounts list inside the call to capture new user-added categories
-      const activeAccounts = mockAccounts.filter(a => a.status !== 'archived');
+      // DYNAMICALLY fetch the latest accounts list from the PASSED argument
+      const activeAccounts = accounts.filter(a => a.status !== 'archived');
       
       // Create a simplified list of leaf-node accounts for the AI to choose from
       const accountMap = activeAccounts

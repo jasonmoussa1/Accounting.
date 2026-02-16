@@ -1,10 +1,11 @@
 
 import React, { useState, useMemo } from 'react';
-import { mockAccounts, updateAccount, archiveAccount } from '../services/accounting';
+import { useFinance } from '../contexts/FinanceContext';
 import { Account, AccountType } from '../types';
 import { Search, Archive, Edit2, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, Plus } from 'lucide-react';
 
 export const ChartOfAccounts: React.FC = () => {
+  const { accounts, updateAccount, addAccount } = useFinance();
   const [searchTerm, setSearchTerm] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['5000', '6000', '1500'])); // Default expand major categories
 
@@ -16,11 +17,11 @@ export const ChartOfAccounts: React.FC = () => {
   };
 
   const filteredAccounts = useMemo(() => {
-    return mockAccounts.filter(a => 
+    return accounts.filter(a => 
       a.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       a.code.includes(searchTerm)
     );
-  }, [searchTerm, mockAccounts.length]); // Re-render if length changes
+  }, [searchTerm, accounts]);
 
   // Recursive render
   const renderTree = (parentId?: string, level = 0) => {
@@ -72,7 +73,7 @@ export const ChartOfAccounts: React.FC = () => {
                    title="Archive"
                    onClick={() => {
                      if (confirm(`Archive ${node.name}? It will be hidden from selection menus.`)) {
-                       archiveAccount(node.id);
+                       updateAccount(node.id, { status: 'archived' });
                      }
                    }}
                  >
@@ -97,7 +98,13 @@ export const ChartOfAccounts: React.FC = () => {
           <h2 className="text-2xl font-bold text-slate-900">Chart of Accounts</h2>
           <p className="text-slate-500">Manage your financial categories and hierarchy.</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm">
+        <button 
+            onClick={async () => {
+                const name = prompt("Account Name:");
+                if (name) await addAccount(name);
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm"
+        >
           <Plus size={16} /> New Account
         </button>
       </div>
@@ -126,15 +133,9 @@ export const ChartOfAccounts: React.FC = () => {
                 <div className="bg-slate-50 px-4 py-2 text-xs font-bold uppercase text-slate-500 border-b border-slate-100">
                   {type}
                 </div>
-                {renderTree(undefined, 0)?.filter((comp: any) => {
-                   // Filter the rendered tree to only show items belonging to this type section if strictly strictly root logic isn't enough
-                   // Actually, renderTree is recursive. We need to call renderTree but only start with roots of this type.
-                   return true; 
-                })} 
-                {/* Re-implementing render logic to be Type-based roots */}
+                {/* Render Logic: Manually render roots to ensure correct grouping by Type */}
                 {roots.map(root => (
                    <React.Fragment key={root.id}>
-                      {/* Manually rendering the root level here to ensure type grouping */}
                       <div className={`flex items-center p-3 border-b border-slate-100 hover:bg-slate-50 transition-colors group ${root.status === 'archived' ? 'opacity-50 grayscale' : ''}`}>
                         <div className="flex-1 flex items-center gap-3">
                           <button 
@@ -153,8 +154,23 @@ export const ChartOfAccounts: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button className="p-2 text-slate-400 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-slate-200 rounded-lg"><Edit2 size={14} /></button>
-                           {root.status !== 'archived' && <button className="p-2 text-slate-400 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 rounded-lg"><Archive size={14} /></button>}
+                           <button 
+                                onClick={() => {
+                                    const newName = prompt("Rename:", root.name);
+                                    if(newName) updateAccount(root.id, {name: newName});
+                                }}
+                                className="p-2 text-slate-400 hover:text-indigo-600 bg-white hover:bg-indigo-50 border border-slate-200 rounded-lg"
+                           >
+                               <Edit2 size={14} />
+                           </button>
+                           {root.status !== 'archived' && (
+                               <button 
+                                    onClick={() => updateAccount(root.id, {status: 'archived'})}
+                                    className="p-2 text-slate-400 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 rounded-lg"
+                               >
+                                   <Archive size={14} />
+                               </button>
+                           )}
                         </div>
                       </div>
                       {(expanded.has(root.id) || searchTerm) && renderTree(root.id, 1)}

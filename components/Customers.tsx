@@ -1,15 +1,30 @@
 
 import React, { useState } from 'react';
-import { mockCustomers } from '../services/accounting';
-import { Search, Plus, MapPin, Mail, Building, Phone } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
+import { Search, Plus, MapPin, Mail, Building } from 'lucide-react';
 
 export const Customers: React.FC = () => {
+  const { customers, addCustomer } = useFinance();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredCustomers = mockCustomers.filter(c => 
+  const filteredCustomers = customers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (c.email && c.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+  const handleAdd = async () => {
+      const name = prompt("Customer Name:");
+      if (name) {
+          await addCustomer({
+              name,
+              email: '',
+              address: '',
+              city: '',
+              state: '',
+              zip: ''
+          });
+      }
+  };
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -18,7 +33,10 @@ export const Customers: React.FC = () => {
           <h2 className="text-2xl font-bold text-slate-900">Customer Directory</h2>
           <p className="text-slate-500">Manage clients and billing information.</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm">
+        <button 
+            onClick={handleAdd}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-all text-sm font-medium shadow-sm"
+        >
           <Plus size={16} /> New Customer
         </button>
       </div>
@@ -57,11 +75,11 @@ export const Customers: React.FC = () => {
                 <div className="space-y-2 text-sm text-slate-600">
                   <div className="flex items-center gap-2">
                     <Mail size={14} className="text-slate-400" />
-                    {customer.email}
+                    {customer.email || 'No Email'}
                   </div>
                   <div className="flex items-start gap-2">
                     <MapPin size={14} className="text-slate-400 mt-0.5" />
-                    <span>{customer.city}, {customer.state}</span>
+                    <span>{customer.city && customer.state ? `${customer.city}, ${customer.state}` : 'No Location'}</span>
                   </div>
                 </div>
                 
