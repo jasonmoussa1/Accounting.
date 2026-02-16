@@ -11,15 +11,10 @@ export const createLinkToken = async (userId: string): Promise<string> => {
   if (!functions) throw new Error("Firebase Functions not initialized");
   
   console.log(`[Plaid] Calling Cloud Function: createLinkToken for ${userId}...`);
-  try {
-    const createLinkTokenFn = httpsCallable<{userId: string}, {link_token: string}>(functions, 'plaidCreateLinkToken');
-    const result = await createLinkTokenFn({ userId });
-    return result.data.link_token;
-  } catch (error) {
-    console.error("Cloud Function Error:", error);
-    // Fallback for UI demo if backend is missing (Remove in actual Prod)
-    return "link-sandbox-" + Math.random().toString(36).substring(7);
-  }
+  // Hard dependency on backend. No mock fallbacks allowed in production.
+  const createLinkTokenFn = httpsCallable<{userId: string}, {link_token: string}>(functions, 'plaidCreateLinkToken');
+  const result = await createLinkTokenFn({ userId });
+  return result.data.link_token;
 };
 
 export const exchangePublicToken = async (userId: string, publicToken: string, metadata: any) => {

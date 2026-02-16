@@ -4,6 +4,8 @@ import { Account, JournalEntry, Transaction, Project, Contractor, Customer, Serv
 import { useAuth } from './AuthContext';
 import { FirestoreRepository, COLLECTIONS } from '../services/repository';
 import { checkEntryLocks, isLineCleared, getAccountIdByCode, validateJournalEntry, SYSTEM_CODES } from '../services/accounting';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../lib/firebase';
 
 interface FinanceContextType {
   accounts: Account[];
@@ -133,14 +135,28 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const postJournalEntry = async (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
       if (!currentUser) throw new Error("Not logged in");
+      if (!functions) throw new Error("Cloud Functions not initialized.");
       
-      // TASK 2: LEDGER GUARD (Centralized Validation)
-      // This throws an error if unbalanced, locked, or invalid accounts are used.
+      // TASK 2: LEDGER GUARD (Hybrid Validation)
+      
+      // 1. Client-Side Pre-Flight Check (Fast UX feedback)
+      // This throws immediately if unbalanced or basic errors exist.
       validateJournalEntry(entry, accounts, reconciliations);
 
-      const id = await FirestoreRepository.addDocument(COLLECTIONS.JOURNAL, entry, currentUser.uid);
-      await refreshData();
-      return id;
+      // 2. Server-Side Execution (Secure)
+      // Since firestore.rules blocks direct creation of journal_entries, we MUST use the Cloud Function.
+      // The function will re-validate (Debits=Credits, Locks) before writing with Admin SDK.
+      try {
+          const postFn = httpsCallable(functions, 'postJournalEntrySecure');
+          const result = await postFn({ entry });
+          const { id } = result.data as { id: string };
+          
+          await refreshData();
+          return id;
+      } catch (error: any) {
+          console.error("Ledger Guard Error:", error);
+          throw new Error(`Ledger Guard Blocked Post: ${error.message}`);
+      }
   };
 
   const postTransaction = async (tx: Transaction) => {
@@ -337,7 +353,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           lines
       };
       
-      await FirestoreRepository.addDocument(COLLECTIONS.JOURNAL, je, currentUser.uid);
+      // Use the Secure Post function here as well for consistency
+      await postJournalEntry(je);
+      
       await logAuditEvent("CREATE_AJE", `Posted Opening Balances for ${businessId} on ${date}`);
       await refreshData();
   };
