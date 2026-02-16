@@ -3,6 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, Auth } from "firebase/auth";
 import { getFirestore, Firestore } from "firebase/firestore";
 import { getStorage, FirebaseStorage } from "firebase/storage";
+import { getFunctions, Functions } from "firebase/functions";
 
 // Robust Environment Variable Loader
 const getEnv = (key: string) => {
@@ -36,6 +37,7 @@ let app;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
 let storage: FirebaseStorage | undefined;
+let functions: Functions | undefined;
 let isFirebaseReady = false;
 
 try {
@@ -45,8 +47,9 @@ try {
       auth = getAuth(app);
       db = getFirestore(app);
       storage = getStorage(app);
+      functions = getFunctions(app); // Defaults to us-central1
       isFirebaseReady = true;
-      console.log("Firebase initialized successfully.");
+      console.log("Firebase & Functions initialized successfully.");
   } else {
       console.warn("Firebase configuration missing. App entering Dev/Offline Mode.");
   }
@@ -54,4 +57,4 @@ try {
   console.warn("Firebase initialization failed. App entering Dev/Offline Mode.", error);
 }
 
-export { auth, db, storage, isFirebaseReady };
+export { auth, db, storage, functions, isFirebaseReady };

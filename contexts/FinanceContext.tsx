@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Account, JournalEntry, Transaction, Project, Contractor, Customer, ServiceItem, Reconciliation, MerchantProfile, SystemSettings, BusinessId, InvoiceItem, AuditEvent, Invoice, InvoicePayment } from '../types';
 import { useAuth } from './AuthContext';
 import { FirestoreRepository, COLLECTIONS } from '../services/repository';
-import { checkEntryLocks, isLineCleared } from '../services/accounting';
+import { checkEntryLocks, isLineCleared, getAccountIdByCode, validateJournalEntry, SYSTEM_CODES } from '../services/accounting';
 
 interface FinanceContextType {
   accounts: Account[];
@@ -23,7 +23,7 @@ interface FinanceContextType {
   // Actions
   addTransactionToInbox: (tx: Omit<Transaction, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   postJournalEntry: (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<string>;
-  postTransaction: (tx: Transaction) => Promise<void>; // NEW: Bridge for Inbox -> Ledger
+  postTransaction: (tx: Transaction) => Promise<void>; 
   updateTransaction: (id: string, updates: Partial<Transaction>) => Promise<void>;
   updateAccount: (id: string, updates: Partial<Account>) => Promise<void>;
   
@@ -34,7 +34,6 @@ interface FinanceContextType {
   finalizeReconciliation: (businessId: string, accountId: string, statementEndDate: string, statementBalance: number, clearedLineIds: Set<string>) => Promise<void>;
   postBatchOpeningEntry: (date: string, balances: { accountId: string, amount: number }[], businessId?: BusinessId) => Promise<void>;
   
-  // New Invoice Actions
   saveInvoice: (invoice: Omit<Invoice, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<Invoice>;
   recordInvoicePayment: (data: { invoiceId: string, amount: number, date: string, method: string }) => Promise<void>;
   
@@ -135,29 +134,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const postJournalEntry = async (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
       if (!currentUser) throw new Error("Not logged in");
       
-      // BLOCKER 1: STRICT BALANCE CHECK
-      const totalDebits = entry.lines.reduce((sum, line) => sum + line.debit, 0);
-      const totalCredits = entry.lines.reduce((sum, line) => sum + line.credit, 0);
-      
-      if (Math.abs(totalDebits - totalCredits) > 0.01) {
-          throw new Error(`CRITICAL LEDGER ERROR: Entry is unbalanced. Debits: $${totalDebits.toFixed(2)}, Credits: $${totalCredits.toFixed(2)}.`);
-      }
-
-      // TASK 2: ENFORCE DEEP ACCOUNT LOCKING
-      try {
-          const accountIds = entry.lines.map(l => l.accountId);
-          checkEntryLocks(entry.date, reconciliations, accountIds);
-      } catch(e: any) {
-          alert(e.message);
-          throw e; // Block execution
-      }
+      // TASK 2: LEDGER GUARD (Centralized Validation)
+      // This throws an error if unbalanced, locked, or invalid accounts are used.
+      validateJournalEntry(entry, accounts, reconciliations);
 
       const id = await FirestoreRepository.addDocument(COLLECTIONS.JOURNAL, entry, currentUser.uid);
       await refreshData();
       return id;
   };
 
-  // NEW: Helper to convert Transaction to Journal Entry securely
   const postTransaction = async (tx: Transaction) => {
     if (!currentUser) throw new Error("Not logged in");
 
@@ -166,31 +151,22 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Logic: Construct Balanced Lines
     if (tx.transactionType === 'expense') {
-        // Debit: Category (Increase Expense)
         lines.push({ accountId: tx.assignedAccount!, debit: absAmount, credit: 0, description: tx.description, contractorId: tx.assignedContractorId });
-        // Credit: Bank (Decrease Asset)
         lines.push({ accountId: tx.bankAccountId, debit: 0, credit: absAmount, description: tx.description });
     } else if (tx.transactionType === 'income') {
-        // Debit: Bank (Increase Asset)
         lines.push({ accountId: tx.bankAccountId, debit: absAmount, credit: 0, description: tx.description });
-        // Credit: Category (Increase Income)
         lines.push({ accountId: tx.assignedAccount!, debit: 0, credit: absAmount, description: tx.description });
     } else if (tx.transactionType === 'transfer') {
-        // Transfer logic
         if (!tx.transferAccountId) throw new Error("Transfer target required");
-        
         if (tx.amount < 0) {
-            // Money Leaving Bank -> Going to Transfer Account
             lines.push({ accountId: tx.transferAccountId, debit: absAmount, credit: 0, description: "Transfer In" });
             lines.push({ accountId: tx.bankAccountId, debit: 0, credit: absAmount, description: "Transfer Out" });
         } else {
-            // Money Entering Bank <- Coming from Transfer Account
             lines.push({ accountId: tx.bankAccountId, debit: absAmount, credit: 0, description: "Transfer In" });
             lines.push({ accountId: tx.transferAccountId, debit: 0, credit: absAmount, description: "Transfer Out" });
         }
     }
 
-    // 1. Post to Ledger (this performs validation & locking checks)
     const jeId = await postJournalEntry({
         date: tx.date,
         description: tx.description,
@@ -199,41 +175,32 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         lines: lines
     });
 
-    // 2. Update Transaction Status
     await updateTransaction(tx.id, { 
         status: 'posted', 
         linkedJournalEntryId: jeId,
-        // Clear flags
         isDuplicate: false 
     });
   };
 
   const updateTransaction = async (id: string, updates: Partial<Transaction>) => {
       if (!currentUser) return;
-      
       const original = inbox.find(t => t.id === id);
       if (!original) return;
 
-      // BLOCKER 2: APPEND-ONLY LOGIC FOR POSTED TRANSACTIONS
       if (original.status === 'posted' && original.linkedJournalEntryId) {
-           
-           // 1. Fetch Original JE
            const originalJE = journal.find(j => j.id === original.linkedJournalEntryId);
            if (!originalJE) throw new Error("Linked Journal Entry not found.");
 
-           // TASK 1: ENFORCE CLEARED-LINE PROTECTION
            const hasClearedLines = originalJE.lines.some((_, idx) => {
-                const lineKey = `${originalJE.id}-${idx}`;
+                const lineKey = `${originalJE.id}:${idx}`; 
                 return isLineCleared(lineKey, reconciliations);
            });
 
            if (hasClearedLines) {
-               alert("Access Denied: This transaction has been cleared in a reconciliation. You must 'Unclear' it in the Reconciliation module before editing.");
+               alert("Access Denied: This transaction has been cleared in a reconciliation.");
                throw new Error("Transaction is Cleared");
            }
 
-           // TASK 2: ENFORCE DEEP ACCOUNT LOCKING
-           // Iterate through ALL accounts in the original entry to ensure none are locked on that date
            let isOriginalDateLocked = false;
            try {
                const accountIds = originalJE.lines.map(l => l.accountId);
@@ -242,19 +209,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                isOriginalDateLocked = true;
            }
 
-           // 2. Prompt for Reason
-           const reason = prompt("You are editing a posted transaction. This will create an Adjusting Journal Entry (AJE). Please enter a reason:", "Correction");
-           if (!reason) return; // Cancel if no reason
+           const reason = prompt("Editing a posted transaction requires an Adjusting Entry. Reason:", "Correction");
+           if (!reason) return; 
 
-           // TASK 4: AJE DATING STRATEGY
-           // If original date is locked, force Reversal Date to Today (First day of open period)
            let reversalDate = originalJE.date;
            if (isOriginalDateLocked) {
-               reversalDate = new Date().toISOString().split('T')[0]; // Use Today
-               await logAuditEvent("PERIOD_CROSSING", `Forced AJE Date to ${reversalDate} because original date ${originalJE.date} is in a locked period.`);
+               reversalDate = new Date().toISOString().split('T')[0]; 
+               await logAuditEvent("PERIOD_CROSSING", `Forced AJE Date to ${reversalDate}`);
            }
 
-           // 3. Create Reversal JE (Swap Debits/Credits)
            const reversalLines = originalJE.lines.map(l => ({
                ...l,
                debit: l.credit,
@@ -272,12 +235,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
                originalJournalEntryId: originalJE.id
            });
 
-           // TASK 3: 'NEEDS REPOST' WORKFLOW
-           // Set status to 'needs_repost' and clear link. This forces it back to the inbox.
            updates.status = 'needs_repost';
-           updates.linkedJournalEntryId = undefined; // Force strict null/undefined via update
-           
-           await logAuditEvent("EDIT_ATTEMPT", `Reversed JE ${originalJE.id} to allow editing of Transaction ${original.id}. Status set to NEEDS_REPOST.`);
+           updates.linkedJournalEntryId = undefined; 
+           await logAuditEvent("EDIT_ATTEMPT", `Reversed JE ${originalJE.id}.`);
       }
 
       await FirestoreRepository.updateDocument(COLLECTIONS.TRANSACTIONS, id, updates, currentUser.uid);
@@ -327,8 +287,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const finalizeReconciliation = async (businessId: string, accountId: string, statementEndDate: string, statementBalance: number, clearedLineIds: Set<string>) => {
     if (!currentUser) throw new Error("Not logged in");
-    
-    // 1. Create Recon Record (Locked)
     const recon: Omit<Reconciliation, 'id' | 'userId' | 'createdAt' | 'updatedAt'> = {
         businessId: businessId as BusinessId,
         accountId,
@@ -340,47 +298,32 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
     await FirestoreRepository.addDocument(COLLECTIONS.RECONCILIATIONS, recon, currentUser.uid);
     await logAuditEvent("LOCK_PERIOD", `Locked period ending ${statementEndDate} for account ${accountId}.`);
-
-    // 2. Refresh
     await refreshData();
   };
 
   const postBatchOpeningEntry = async (date: string, balances: { accountId: string, amount: number }[], businessId: BusinessId = 'Shared') => {
       if (!currentUser) throw new Error("Not logged in");
-      
       const lines = balances.map(b => {
         const acc = accounts.find(a => a.id === b.accountId);
         if (!acc) throw new Error(`Account ${b.accountId} not found`);
-
         let debit = 0;
         let credit = 0;
-
-        if (acc.type === 'Asset') {
-            debit = b.amount;
-        } else if (acc.type === 'Liability' || acc.type === 'Equity') {
-            credit = b.amount;
-        } else {
-            // Fallback for P&L items if migrating mid-year (Expenses=Debit, Income=Credit)
+        if (acc.type === 'Asset') debit = b.amount;
+        else if (acc.type === 'Liability' || acc.type === 'Equity') credit = b.amount;
+        else {
             if (acc.type === 'Expense' || acc.type === 'Cost of Services') debit = b.amount;
             else credit = b.amount;
         }
-
-        return {
-            accountId: b.accountId,
-            debit,
-            credit,
-            description: "Opening Balance"
-        };
+        return { accountId: b.accountId, debit, credit, description: "Opening Balance" };
       });
 
-      // Calculate Plug
       const totalDebits = lines.reduce((s, l) => s + l.debit, 0);
       const totalCredits = lines.reduce((s, l) => s + l.credit, 0);
-      
       if (Math.abs(totalDebits - totalCredits) > 0.01) {
           const diff = totalDebits - totalCredits;
+          const equityId = getAccountIdByCode(accounts, SYSTEM_CODES.OPENING_BALANCE_EQUITY);
           lines.push({
-              accountId: '3000', // Hardcoded Opening Balance Equity ID
+              accountId: equityId,
               debit: diff < 0 ? Math.abs(diff) : 0,
               credit: diff > 0 ? diff : 0,
               description: "Opening Balance Equity Adjustment"
@@ -409,27 +352,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const recordInvoicePayment = async (data: { invoiceId: string, amount: number, date: string, method: string }) => {
       if (!currentUser) throw new Error("Not logged in");
-      
-      // 1. Validate Input
-      if (data.amount <= 0) {
-          throw new Error("Payment amount must be positive. Use a Credit Memo for refunds.");
-      }
+      if (data.amount <= 0) throw new Error("Payment amount must be positive.");
 
       const invoice = invoices.find(i => i.id === data.invoiceId);
       if (!invoice) throw new Error("Invoice not found");
 
-      // 2. Post to Ledger (Cash Basis)
+      const undepositedFundsId = getAccountIdByCode(accounts, SYSTEM_CODES.UNDEPOSITED_FUNDS);
+      const salesIncomeId = getAccountIdByCode(accounts, SYSTEM_CODES.SALES_INCOME);
+
       const jeId = await postJournalEntry({
           date: data.date,
           description: `Payment for Inv #${invoice.invoiceNumber}`,
           businessId: invoice.businessId,
           lines: [
-              { accountId: '1002', debit: data.amount, credit: 0, description: 'Undeposited Funds' },
-              { accountId: '4000', debit: 0, credit: data.amount, description: 'Sales Income' } 
+              { accountId: undepositedFundsId, debit: data.amount, credit: 0, description: 'Undeposited Funds' },
+              { accountId: salesIncomeId, debit: 0, credit: data.amount, description: 'Sales Income' } 
           ]
       });
 
-      // 3. Save Payment Record
       await FirestoreRepository.addDocument<InvoicePayment>(COLLECTIONS.INVOICE_PAYMENTS, {
           invoiceId: data.invoiceId,
           date: data.date,
@@ -438,10 +378,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           linkedJournalEntryId: jeId
       }, currentUser.uid);
 
-      // 4. Update Invoice Status
-      const previousPaid = invoice.amountPaid || 0;
-      const newPaid = previousPaid + data.amount;
-      
+      const newPaid = (invoice.amountPaid || 0) + data.amount;
       const newStatus = newPaid >= invoice.totalAmount ? 'paid' : 'partial';
       
       await FirestoreRepository.updateDocument(COLLECTIONS.INVOICES, invoice.id, {

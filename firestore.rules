@@ -1,0 +1,93 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // --- HELPER FUNCTIONS ---
+    
+    // Check if the requesting user is authenticated and matches the document's owner
+    function isResourceOwner() {
+      return request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Check if the user is authenticated and setting themselves as the owner on creation
+    function isCreatingOwnedResource() {
+      return request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+
+    // --- STANDARD COLLECTIONS (Read/Write/Delete Allowed) ---
+
+    match /accounts/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /transactions/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /projects/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /contractors/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /customers/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /invoices/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /invoice_payments/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /merchant_profiles/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /service_items/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    match /system_settings/{docId} {
+      allow read, update, delete: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+    }
+
+    // --- INTEGRITY COLLECTIONS (Restricted Deletion) ---
+
+    // Ledger: Immutable History
+    match /journal_entries/{docId} {
+      allow read, update: if isResourceOwner(); // Updates allowed for metadata/status, but logic should prefer Reversals
+      allow create: if isCreatingOwnedResource();
+      allow delete: if false; // INTEGRITY RULE: Never delete a posted entry
+    }
+
+    // Reconciliations: Immutable Periods
+    match /reconciliations/{docId} {
+      allow read, update: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+      allow delete: if false; // INTEGRITY RULE: Never delete a lock record
+    }
+
+    // Audit Log: Append Only
+    match /audit_events/{docId} {
+      allow read: if isResourceOwner();
+      allow create: if isCreatingOwnedResource();
+      allow update, delete: if false; // INTEGRITY RULE: Tamper-proof log
+    }
+  }
+}

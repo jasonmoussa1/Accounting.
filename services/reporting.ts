@@ -86,12 +86,16 @@ export const generateProfitAndLoss = (
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
     
-    // Task 3: Shared Logic (Include Specific OR Shared, or All if Combined)
-    if (businessId !== 'Combined') {
-        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
-    }
-
     entry.lines.forEach(line => {
+      // Task 2: Line-Level Business Attribution
+      // If the line has a specific businessId, use it. Otherwise fall back to entry.businessId.
+      const effectiveBusinessId = line.businessId || entry.businessId;
+
+      // Filter Logic
+      if (businessId !== 'Combined') {
+          if (effectiveBusinessId !== businessId && effectiveBusinessId !== 'Shared') return;
+      }
+
       const current = accountTotals.get(line.accountId) || 0;
       // Accumulate raw net impact (Debit - Credit)
       accountTotals.set(line.accountId, current + (line.debit - line.credit));
@@ -168,12 +172,15 @@ export const generateBalanceSheet = (
   journal.forEach(entry => {
     if (entry.date > asOfDate) return;
     
-    // Task 3: Shared Logic
-    if (businessId !== 'Combined') {
-        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
-    }
-
     entry.lines.forEach(line => {
+      // Task 2: Line-Level Business Attribution
+      const effectiveBusinessId = line.businessId || entry.businessId;
+
+      // Filter Logic
+      if (businessId !== 'Combined') {
+          if (effectiveBusinessId !== businessId && effectiveBusinessId !== 'Shared') return;
+      }
+
       // 1. Accumulate Account Balance
       const net = line.debit - line.credit;
       accountTotals.set(line.accountId, (accountTotals.get(line.accountId) || 0) + net);
@@ -281,11 +288,6 @@ export const generateCashFlow = (
   
   journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
-    
-    // Task 3: Shared Logic
-    if (businessId !== 'Combined') {
-        if (entry.businessId !== businessId && entry.businessId !== 'Shared') return;
-    }
 
     const monthKey = entry.date.substring(0, 7); // YYYY-MM
     if (!months.has(monthKey)) months.set(monthKey, {in: 0, out: 0});
@@ -293,6 +295,13 @@ export const generateCashFlow = (
     const data = months.get(monthKey)!;
 
     entry.lines.forEach(line => {
+      // Task 2: Line-Level Business Attribution
+      const effectiveBusinessId = line.businessId || entry.businessId;
+
+      if (businessId !== 'Combined') {
+         if (effectiveBusinessId !== businessId && effectiveBusinessId !== 'Shared') return;
+      }
+
       if (isBankAccount(line.accountId)) { 
         if (line.debit > 0) data.in += line.debit;
         if (line.credit > 0) data.out += line.credit;
@@ -322,7 +331,8 @@ export const generateGeneralLedgerCSV = (journal: JournalEntry[], accounts: Acco
       const acct = accountMap.get(line.accountId);
       // Escape description quotes
       const safeDesc = (line.description || entry.description).replace(/"/g, '""');
-      return `${entry.date},${entry.businessId},"${acct?.name || line.accountId}",${acct?.code || ''},"${safeDesc}",${line.debit},${line.credit},${entry.projectId || ''}`;
+      const effectiveBusiness = line.businessId || entry.businessId;
+      return `${entry.date},${effectiveBusiness},"${acct?.name || line.accountId}",${acct?.code || ''},"${safeDesc}",${line.debit},${line.credit},${entry.projectId || ''}`;
     });
   }).join("\n");
   

@@ -110,19 +110,19 @@ export const Dashboard: React.FC = () => {
       
       {/* INTEGRITY GUARDRAIL: NEEDS REPOST */}
       {needsRepostCount > 0 && (
-        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse ring-2 ring-rose-500/20">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse ring-2 ring-amber-500/20">
            <div className="flex items-center gap-3">
-              <div className="bg-rose-100 p-2 rounded-full text-rose-600">
+              <div className="bg-amber-100 p-2 rounded-full text-amber-600">
                  <ShieldAlert size={24} />
               </div>
               <div>
-                 <h3 className="text-lg font-bold text-rose-900">Integrity Check</h3>
-                 <p className="text-rose-700 text-sm">
+                 <h3 className="text-lg font-bold text-amber-900">Integrity Check</h3>
+                 <p className="text-amber-700 text-sm">
                    {needsRepostCount} edited transactions have been reversed and need approval to re-post to the ledger.
                  </p>
               </div>
            </div>
-           <button onClick={() => window.location.href='#inbox'} className="px-6 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg shadow-sm transition-colors text-sm">
+           <button onClick={() => window.location.href='#inbox'} className="px-6 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg shadow-sm transition-colors text-sm">
               Fix Now
            </button>
         </div>

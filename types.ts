@@ -89,6 +89,8 @@ export interface JournalLine {
   description?: string;
   debit: number;
   credit: number;
+  // Task 2: Line-Level Business Attribution
+  businessId?: BusinessId; 
   contractorId?: string;
   isCleared?: boolean;
   clearedAt?: string;

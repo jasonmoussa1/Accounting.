@@ -1,60 +1,88 @@
 
-import React, { useState, useMemo } from 'react';
-import { mockJournal, mockAccounts, mockReconciliations, finalizeReconciliation } from '../services/accounting';
+import React, { useState, useMemo, useEffect } from 'react';
+import { finalizeReconciliation, getSmartStartingBalance, getLastReconciliation } from '../services/accounting';
 import { JournalEntry, JournalLine, BusinessId } from '../types';
-import { Check, Lock, AlertCircle, Calculator, Calendar, Building, Landmark } from 'lucide-react';
+import { Check, Lock, AlertCircle, Calculator, Calendar, Building, Landmark, History } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
 
 export const Reconciliation: React.FC = () => {
-  const [selectedAccountId, setSelectedAccountId] = useState('1000'); // Default Checking
+  const { journal, accounts, reconciliations, finalizeReconciliation, inbox } = useFinance();
+  
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(''); 
   const [selectedBusinessId, setSelectedBusinessId] = useState<BusinessId>('Big Sky FPV');
   const [statementDate, setStatementDate] = useState('2023-10-31');
-  const [statementBalance, setStatementBalance] = useState<number>(10000.00);
+  const [statementBalance, setStatementBalance] = useState<number>(0);
   
   // State for which lines are checked off
   const [clearedLineIds, setClearedLineIds] = useState<Set<string>>(new Set());
 
-  const selectedAccount = mockAccounts.find(a => a.id === selectedAccountId);
-  
-  // Available bank accounts for dropdown
-  const bankAccounts = useMemo(() => mockAccounts.filter(a => a.type === 'Asset' || a.type === 'Liability'), []);
+  // Task 3: Smart Starting Balance
+  const [startingBalance, setStartingBalance] = useState(0);
 
-  // Check if this period is already locked in "database"
+  // Available bank accounts
+  const bankAccounts = useMemo(() => accounts.filter(a => a.type === 'Asset' || a.type === 'Liability'), [accounts]);
+
+  // Set default account on load
+  useEffect(() => {
+      if (bankAccounts.length > 0 && !selectedAccountId) {
+          setSelectedAccountId(bankAccounts[0].id);
+      }
+  }, [bankAccounts]);
+
+  // Recalculate Starting Balance whenever Account changes or Reconciliations update
+  useEffect(() => {
+      if(selectedAccountId) {
+          const smartBalance = getSmartStartingBalance(reconciliations, selectedAccountId, 0); // 0 is Day Zero fallback
+          setStartingBalance(smartBalance);
+          // Auto-set target to something reasonable if 0 (DX improvement)
+          if(statementBalance === 0) setStatementBalance(smartBalance);
+      }
+  }, [selectedAccountId, reconciliations]);
+
+  const selectedAccount = accounts.find(a => a.id === selectedAccountId);
+
+  // Check if this period is already locked
   const existingLock = useMemo(() => {
-    return mockReconciliations.find(r => 
+    return reconciliations.find(r => 
       r.accountId === selectedAccountId && 
       r.statementEndDate >= statementDate
     );
-  }, [selectedAccountId, statementDate, mockReconciliations.length]);
+  }, [selectedAccountId, statementDate, reconciliations]);
 
   const isPeriodLocked = !!existingLock;
 
-  // Get all Journal Lines affecting this account up to the statement date
   const relevantLines = useMemo(() => {
     const lines: { entryId: string; date: string; description: string; debit: number; credit: number; lineId: string; isCleared: boolean }[] = [];
     
-    mockJournal.forEach(entry => {
-      // 1. Date Filter
+    journal.forEach(entry => {
       if (entry.date > statementDate) return;
-      
-      // 2. Business Filter? (Usually bank accounts are specific, but if shared, we filter)
-      // For now, we assume the Account ID is the source of truth, not the Business ID on the entry (since transfers can cross)
-      
       entry.lines.forEach((line, idx) => {
         if (line.accountId === selectedAccountId) {
-          lines.push({
-            entryId: entry.id,
-            date: entry.date,
-            description: line.description || entry.description,
-            debit: line.debit,
-            credit: line.credit,
-            lineId: `${entry.id}-${idx}`,
-            isCleared: !!line.isCleared
-          });
+          // IMPORTANT: If line is cleared in a PREVIOUS reconciliation, do not show it here.
+          // Only show:
+          // 1. Uncleared lines
+          // 2. Lines cleared in THIS session (local state)
+          // 3. If viewing a Locked Period: Lines locked in THIS specific reconciliation
+          
+          const lineKey = `${entry.id}:${idx}`;
+          const isLineLockedInPast = reconciliations.some(r => r.accountId === selectedAccountId && r.statementEndDate < statementDate && r.clearedLineIds.includes(lineKey));
+          
+          if (!isLineLockedInPast) {
+              lines.push({
+                entryId: entry.id,
+                date: entry.date,
+                description: line.description || entry.description,
+                debit: line.debit,
+                credit: line.credit,
+                lineId: lineKey,
+                isCleared: !!line.isCleared
+              });
+          }
         }
       });
     });
     return lines.sort((a, b) => a.date.localeCompare(b.date));
-  }, [selectedAccountId, statementDate, mockJournal.length]);
+  }, [selectedAccountId, statementDate, journal, reconciliations]);
 
   const toggleClear = (lineId: string) => {
     if (isPeriodLocked) return;
@@ -68,9 +96,6 @@ export const Reconciliation: React.FC = () => {
   };
 
   // Calculations
-  const startingBalance = 0; // In a real app, this is calculated from previous reconciliations. Simplified for demo.
-  
-  // If locked, use database 'isCleared' status. If open, use local state.
   const effectiveClearedLines = isPeriodLocked 
     ? new Set(relevantLines.filter(l => l.isCleared).map(l => l.lineId))
     : clearedLineIds;
@@ -87,12 +112,22 @@ export const Reconciliation: React.FC = () => {
   const difference = statementBalance - clearedBalance;
   const isBalanced = Math.abs(difference) < 0.01;
 
-  const handleLock = () => {
+  const handleLock = async () => {
+    // Validation
+    const blockingTransactions = inbox.filter(tx => 
+        tx.status === 'needs_repost' &&
+        tx.bankAccountId === selectedAccountId &&
+        tx.date <= statementDate
+    );
+
+    if (blockingTransactions.length > 0) {
+        alert(`Cannot Lock Period: There are ${blockingTransactions.length} transactions labeled 'Needs Repost' within this period.`);
+        return;
+    }
+
     if (isBalanced && !isPeriodLocked) {
-      if (confirm(`Are you sure you want to lock the period ending ${statementDate}? This will prevent changes to these transactions.`)) {
-        finalizeReconciliation(selectedBusinessId, selectedAccountId, statementDate, statementBalance, clearedLineIds);
-        alert("Reconciliation Complete. Period is now LOCKED.");
-        // Force re-render handled by React state/memo update
+      if (confirm(`Lock period ending ${statementDate}?`)) {
+        await finalizeReconciliation(selectedBusinessId, selectedAccountId, statementDate, statementBalance, clearedLineIds);
       }
     }
   };
@@ -110,19 +145,7 @@ export const Reconciliation: React.FC = () => {
                 <p className="text-slate-500 text-sm">Match ledger to bank statement.</p>
             </div>
             
-            {/* Account & Business Selectors */}
             <div className="flex flex-wrap gap-4">
-                <div className="relative">
-                    <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                    <select 
-                        value={selectedBusinessId}
-                        onChange={(e) => setSelectedBusinessId(e.target.value as BusinessId)}
-                        className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500/20 appearance-none min-w-[150px]"
-                    >
-                        <option value="Big Sky FPV">Big Sky FPV</option>
-                        <option value="TRL Band">TRL Band</option>
-                    </select>
-                </div>
                 <div className="relative">
                     <Landmark className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                     <select 
@@ -138,7 +161,6 @@ export const Reconciliation: React.FC = () => {
             </div>
         </div>
 
-        {/* Statement Inputs */}
         <div className="flex flex-wrap gap-6 items-end bg-slate-50/50 p-4 rounded-xl border border-slate-100">
           <div className="space-y-1">
             <label className="text-[10px] uppercase font-bold text-slate-500">Statement Date</label>
@@ -167,9 +189,10 @@ export const Reconciliation: React.FC = () => {
             </div>
           </div>
           
-          {/* Equation Display */}
           <div className="flex items-center gap-2 text-xs text-slate-500 ml-auto pb-2">
-             <span className="font-mono">{startingBalance.toFixed(2)}</span>
+             <span className="font-mono text-slate-400" title="Smart Starting Balance (Calculated from Last Recon)">
+                 {startingBalance.toFixed(2)}
+             </span>
              <span>+</span>
              <span className="font-mono text-emerald-600">{clearedDeposits.toFixed(2)}</span>
              <span>-</span>
@@ -180,18 +203,13 @@ export const Reconciliation: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
-        
-        {/* Left: Transaction List */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-100 sticky top-0 z-10">
                 <tr>
-                  <th className="px-6 py-3 font-medium w-12 text-center">
-                    <Check size={14} />
-                  </th>
+                  <th className="px-6 py-3 font-medium w-12 text-center"><Check size={14} /></th>
                   <th className="px-6 py-3 font-medium">Date</th>
                   <th className="px-6 py-3 font-medium">Description</th>
                   <th className="px-6 py-3 font-medium text-right">Debit</th>
@@ -201,7 +219,7 @@ export const Reconciliation: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {relevantLines.map((line) => {
                   const isChecked = effectiveClearedLines.has(line.lineId);
-                  const isLinePreLocked = line.isCleared; // From DB
+                  const isLinePreLocked = line.isCleared; 
 
                   return (
                     <tr 
@@ -211,9 +229,7 @@ export const Reconciliation: React.FC = () => {
                     >
                       <td className="px-6 py-3 text-center">
                         <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                          isChecked 
-                            ? 'bg-indigo-600 border-indigo-600 text-white' 
-                            : 'border-slate-300 bg-white'
+                          isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
                         }`}>
                           {isChecked && <Check size={12} />}
                           {isLinePreLocked && isPeriodLocked && <Lock size={10} className="text-white absolute" />}
@@ -221,29 +237,26 @@ export const Reconciliation: React.FC = () => {
                       </td>
                       <td className="px-6 py-3 font-mono text-slate-600">{line.date}</td>
                       <td className="px-6 py-3 font-medium text-slate-900">{line.description}</td>
-                      <td className="px-6 py-3 text-right font-mono text-slate-600">
-                        {line.debit > 0 ? `$${line.debit.toFixed(2)}` : '-'}
-                      </td>
-                      <td className="px-6 py-3 text-right font-mono text-slate-600">
-                        {line.credit > 0 ? `$${line.credit.toFixed(2)}` : '-'}
-                      </td>
+                      <td className="px-6 py-3 text-right font-mono text-slate-600">{line.debit > 0 ? `$${line.debit.toFixed(2)}` : '-'}</td>
+                      <td className="px-6 py-3 text-right font-mono text-slate-600">{line.credit > 0 ? `$${line.credit.toFixed(2)}` : '-'}</td>
                     </tr>
                   );
                 })}
                 {relevantLines.length === 0 && (
-                    <tr><td colSpan={5} className="text-center py-8 text-slate-400">No transactions found for this period.</td></tr>
+                    <tr><td colSpan={5} className="text-center py-8 text-slate-400">All transactions reconciled!</td></tr>
                 )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Right: Summary Panel */}
         <div className="w-full md:w-80 bg-slate-900 text-slate-300 p-6 flex flex-col justify-between shrink-0 border-l border-slate-800">
           <div className="space-y-6">
              <div>
                 <h3 className="text-white font-bold text-lg mb-1">{selectedAccount?.name}</h3>
-                <p className="text-xs text-slate-400 font-mono">{selectedAccount?.code} • {selectedBusinessId}</p>
+                <p className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                    <History size={12}/> Last Recon: {getLastReconciliation(reconciliations, selectedAccountId)?.statementEndDate || 'None'}
+                </p>
              </div>
 
              <div className="space-y-4 text-sm">
@@ -293,13 +306,7 @@ export const Reconciliation: React.FC = () => {
                   : 'bg-slate-800 text-slate-500 cursor-not-allowed'
               }`}
             >
-              {isPeriodLocked ? (
-                <>Period Locked</>
-              ) : (
-                <>
-                  <Lock size={18} /> Finish & Lock
-                </>
-              )}
+              {isPeriodLocked ? <>Period Locked</> : <><Lock size={18} /> Finish & Lock</>}
             </button>
           </div>
         </div>
