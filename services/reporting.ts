@@ -10,6 +10,7 @@ export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'las
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth(); // 0-11
+  const todayStr = now.toISOString().split('T')[0];
   
   if (range === 'month') {
     // Dynamic Current Month
@@ -25,18 +26,19 @@ export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'las
     return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
   }
   if (range === 'ytd') {
-    // Current Calendar Year to TODAY
-    return { start: `${year}-01-01`, end: now.toISOString().split('T')[0] };
+    // Task 4: End date must be TODAY to prevent future data
+    return { start: `${year}-01-01`, end: todayStr };
   }
   if (range === 'year') {
-    // Full Calendar Year
-    return { start: `${year}-01-01`, end: `${year}-12-31` };
+    // Task 4: "Year" also interpreted as "Year to Date" for now based on requirements, or Full Calendar Year depending on usage.
+    // Spec says: "For the 'ytd' and 'year' cases, the end date must be Today's Date"
+    return { start: `${year}-01-01`, end: todayStr };
   }
   if (range === 'lastYear') {
     // Previous Calendar Year
     return { start: `${year - 1}-01-01`, end: `${year - 1}-12-31` };
   }
-  return { start: `${year}-01-01`, end: `${year}-12-31` };
+  return { start: `${year}-01-01`, end: todayStr };
 };
 
 // --- PROFIT AND LOSS ---
@@ -251,25 +253,30 @@ export const generateCashFlow = (
   start: string,
   end: string,
   businessId: BusinessId | 'Combined',
-  accounts?: Account[] // Optional injected accounts for detection
+  accounts: Account[] 
 ): CashFlowMonth[] => {
   const months = new Map<string, {in: number, out: number}>();
   
-  // Task 4: Performance Optimization (Create Map if accounts provided)
-  const accountMap = accounts ? new Map(accounts.map(a => [a.id, a])) : new Map();
+  // Task 4: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
 
-  // Task 2: Dynamic Bank Detection
+  // Task 3: Dynamic Bank Detection (Name based)
   const isBankAccount = (accountId: string): boolean => {
-      // If we have account data, use it
-      if (accounts) {
-          const acc = accountMap.get(accountId);
-          if (!acc) return false;
-          if (acc.type !== 'Asset') return false;
-          const n = acc.name.toLowerCase();
-          return n.includes('checking') || n.includes('savings') || n.includes('venmo') || n.includes('paypal') || n.includes('cash') || n.includes('bank');
-      }
-      // Fallback (should be avoided by passing accounts)
-      return accountId === '1000' || accountId === '1001';
+      const acc = accountMap.get(accountId);
+      if (!acc) return false;
+      
+      // Strict Asset check
+      if (acc.type !== 'Asset') return false;
+      
+      const n = acc.name.toLowerCase();
+      // Broad matching for cash equivalents
+      return n.includes('checking') || 
+             n.includes('savings') || 
+             n.includes('venmo') || 
+             n.includes('paypal') || 
+             n.includes('cash') || 
+             n.includes('bank') ||
+             n.includes('stripe');
   };
   
   journal.forEach(entry => {
@@ -286,7 +293,6 @@ export const generateCashFlow = (
     const data = months.get(monthKey)!;
 
     entry.lines.forEach(line => {
-      // Task 2: Use Dynamic Detection
       if (isBankAccount(line.accountId)) { 
         if (line.debit > 0) data.in += line.debit;
         if (line.credit > 0) data.out += line.credit;

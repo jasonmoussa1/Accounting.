@@ -6,10 +6,50 @@ import { Account, JournalEntry, Project, Transaction, Reconciliation, MerchantPr
 // Data must be passed in from the FinanceContext.
 
 // --- Helper to get account details (Requires account list injection) ---
+// Optimization: Use Map if available, otherwise find.
 const getAccount = (id: string, accounts: Account[]) => accounts.find(a => a.id === id);
+
+// --- Task 1: Robust Multi-Account Period Locking ---
+
+export const getLockedThroughDate = (reconciliations: Reconciliation[], accountId: string): string | null => {
+  const accountLocks = reconciliations.filter(r => r.accountId === accountId && r.isLocked);
+  if (accountLocks.length === 0) return null;
+  
+  // Sort descending to find the most recent lock date
+  accountLocks.sort((a, b) => b.statementEndDate.localeCompare(a.statementEndDate));
+  return accountLocks[0].statementEndDate;
+};
+
+export const checkPeriodLock = (date: string, reconciliations: Reconciliation[], accountId: string) => {
+  if (!accountId) throw new Error("Period Check Error: Account ID is required.");
+  
+  const lockedDate = getLockedThroughDate(reconciliations, accountId);
+
+  if (lockedDate && date <= lockedDate) {
+    throw new Error(`Period Locked: Account ${accountId} is closed through ${lockedDate}. Cannot modify transactions on or before this date.`);
+  }
+  return false;
+};
+
+export const checkEntryLocks = (entryDate: string, reconciliations: Reconciliation[], accountIds: string[]) => {
+  const uniqueAccounts = Array.from(new Set(accountIds));
+  
+  for (const accId of uniqueAccounts) {
+    checkPeriodLock(entryDate, reconciliations, accId);
+  }
+};
+
+// --- Task 2: Cleared Line Protection ---
+
+export const isLineCleared = (lineKey: string, reconciliations: Reconciliation[]): boolean => {
+  return reconciliations.some(rec => rec.clearedLineIds.includes(lineKey));
+};
 
 // --- Profitability Engine ---
 export const calculateProjectStats = (projectId: string, journal: JournalEntry[], accounts: Account[]) => {
+  // Task 5: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
+  
   const entries = journal.filter(je => je.projectId === projectId);
   
   let revenue = 0;
@@ -18,7 +58,7 @@ export const calculateProjectStats = (projectId: string, journal: JournalEntry[]
 
   entries.forEach(entry => {
     entry.lines.forEach(line => {
-      const account = getAccount(line.accountId, accounts);
+      const account = accountMap.get(line.accountId);
       if (!account) return;
 
       const amount = line.debit - line.credit; // Default debit normal for expenses
@@ -107,6 +147,9 @@ export const getDashboardMetrics = (
     inbox: Transaction[], 
     reconciliations: Reconciliation[]
 ) => {
+  // Task 5: Performance Optimization
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
+
   let totalRevenue = 0;
   let totalExpenses = 0;
   let ownerDraw = 0;
@@ -114,14 +157,18 @@ export const getDashboardMetrics = (
 
   journal.forEach(entry => {
     entry.lines.forEach(line => {
-      const account = getAccount(line.accountId, accounts);
+      const account = accountMap.get(line.accountId);
       if (!account) return;
 
       if (account.type === 'Income') {
         totalRevenue += (line.credit - line.debit);
       } else if (account.type === 'Expense' || account.type === 'Cost of Services') {
         totalExpenses += (line.debit - line.credit);
-      } else if (account.code === '3000' || account.name === 'Owner\'s Equity') {
+      } 
+      
+      // Task 6: Owner Draw Tracking
+      if (account.code === '3000' || account.name.includes("Owner's Equity") || account.name.includes("Owner Draw")) {
+        // Equity is Credit normal. Draws are Debits.
         ownerDraw += line.debit;
       }
     });
@@ -132,13 +179,14 @@ export const getDashboardMetrics = (
   const { totalCash, totalDebt, reconciliations: recStats } = getFinancialHealth(accounts, journal, reconciliations);
 
   // Convert last 5 journal entries
+  // Task 6: Exclude Opening Balances
   recentTransactions = journal
-    .filter(je => !je.isAdjustingEntry && je.description !== 'Opening Balance Set')
+    .filter(je => !je.isAdjustingEntry && !je.description.includes('Opening Balance'))
     .slice(-5)
     .reverse()
     .map(je => {
         const mainLine = je.lines.find(l => l.accountId !== '1000' && l.accountId !== '3001') || je.lines[0];
-        const account = getAccount(mainLine.accountId, accounts);
+        const account = accountMap.get(mainLine.accountId);
         const isIncome = account?.type === 'Income';
         return {
             id: je.id,
@@ -226,19 +274,6 @@ export const checkDuplicate = (tx: Transaction, journal: JournalEntry[] = []): b
 
     return isAmountMatch;
   });
-};
-
-export const checkPeriodLock = (date: string, reconciliations: Reconciliation[], accountId?: string) => {
-  const lockedRecon = reconciliations.find(r => 
-    r.isLocked && 
-    (accountId ? r.accountId === accountId : true) && 
-    date <= r.statementEndDate
-  );
-
-  if (lockedRecon) {
-    throw new Error(`Period Locked: The period ending ${lockedRecon.statementEndDate} is closed. You must create an Adjusting Journal Entry to affect this period.`);
-  }
-  return false;
 };
 
 // --- MOCKS CLEARED FOR PRODUCTION ---
