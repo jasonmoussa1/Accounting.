@@ -1,0 +1,7 @@
+{
+  "name": "CustomBooks",
+  "description": "Professional-grade accounting software for small businesses with AI-powered categorization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
