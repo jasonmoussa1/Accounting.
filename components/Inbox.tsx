@@ -243,7 +243,7 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost 
 };
 
 export const Inbox: React.FC = () => {
-  const { inbox, journal, accounts, updateTransaction, postJournalEntry, addTransactionToInbox, merchantProfiles } = useFinance();
+  const { inbox, journal, accounts, updateTransaction, postTransaction, addTransactionToInbox, merchantProfiles } = useFinance();
   
   const [filter, setFilter] = useState<'all' | 'imported' | 'posted'>('imported');
   
@@ -300,8 +300,8 @@ export const Inbox: React.FC = () => {
         if (!confirmAsset) return; 
       }
 
-      const id = await postJournalEntry(tx);
-      await updateTransaction(tx.id, { status: 'posted', linkedJournalEntryId: id });
+      // USE NEW HELPER TO ENSURE BALANCED LEDGER ENTRY
+      await postTransaction(tx);
     } catch (e: any) {
       console.error(e);
       alert(`Error: ${e.message}`);
