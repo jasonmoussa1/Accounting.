@@ -1,24 +1,36 @@
 
-import { mockJournal, mockAccounts, mockOpenInvoices } from './accounting';
-import { BusinessId, AccountType, Account } from '../types';
+import { BusinessId, Account, JournalEntry } from '../types';
 
 interface DateRange {
   start: string;
   end: string;
 }
 
-export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'ytd'): DateRange => {
+export const getFinancialDateRange = (range: 'month' | 'quarter' | 'year' | 'lastYear' | 'ytd'): DateRange => {
   const now = new Date();
   const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
   
   if (range === 'month') {
-    return { start: `${year}-10-01`, end: `${year}-10-31` }; // Hardcoded to Oct for demo
+    // Dynamic Current Month
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+    return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
   }
   if (range === 'quarter') {
-    return { start: `${year}-10-01`, end: `${year}-12-31` };
+    // Dynamic Current Quarter
+    const quarter = Math.floor(month / 3);
+    const start = new Date(year, quarter * 3, 1);
+    const end = new Date(year, quarter * 3 + 3, 0);
+    return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
   }
   if (range === 'year' || range === 'ytd') {
+    // Current Calendar Year
     return { start: `${year}-01-01`, end: `${year}-12-31` };
+  }
+  if (range === 'lastYear') {
+    // Previous Calendar Year
+    return { start: `${year - 1}-01-01`, end: `${year - 1}-12-31` };
   }
   return { start: `${year}-01-01`, end: `${year}-12-31` };
 };
@@ -42,7 +54,13 @@ export interface PLReport {
   netIncome: number;
 }
 
-export const generateProfitAndLoss = (start: string, end: string, businessId: BusinessId | 'Combined'): PLReport => {
+export const generateProfitAndLoss = (
+  journal: JournalEntry[], 
+  accounts: Account[], 
+  start: string, 
+  end: string, 
+  businessId: BusinessId | 'Combined'
+): PLReport => {
   const report: PLReport = {
     revenue: [],
     cogs: [],
@@ -56,37 +74,37 @@ export const generateProfitAndLoss = (start: string, end: string, businessId: Bu
 
   const accountTotals = new Map<string, number>();
 
-  mockJournal.forEach(entry => {
+  journal.forEach(entry => {
     if (entry.date < start || entry.date > end) return;
     if (businessId !== 'Combined' && entry.businessId !== businessId) return;
 
     entry.lines.forEach(line => {
       const current = accountTotals.get(line.accountId) || 0;
-      // Normal Balance Logic will be handled in aggregation
+      // Accumulate raw net impact (Debit - Credit)
       accountTotals.set(line.accountId, current + (line.debit - line.credit));
     });
   });
 
-  mockAccounts.forEach(acc => {
+  accounts.forEach(acc => {
     const rawBalance = accountTotals.get(acc.id) || 0;
     
     if (acc.type === 'Income') {
       // Income is Credit Normal (Credit - Debit). Since rawBalance is Debit - Credit, we negate it.
       const amount = -rawBalance;
-      if (amount !== 0) {
+      if (Math.abs(amount) > 0.01) {
         report.revenue.push({ accountId: acc.id, accountName: acc.name, amount });
         report.totalRevenue += amount;
       }
     } else if (acc.type === 'Cost of Services') {
-      // Expense is Debit Normal
+      // Expense/COGS is Debit Normal
       const amount = rawBalance;
-      if (amount !== 0) {
+      if (Math.abs(amount) > 0.01) {
         report.cogs.push({ accountId: acc.id, accountName: acc.name, amount });
         report.totalCOGS += amount;
       }
     } else if (acc.type === 'Expense') {
       const amount = rawBalance;
-      if (amount !== 0) {
+      if (Math.abs(amount) > 0.01) {
         report.expenses.push({ accountId: acc.id, accountName: acc.name, amount });
         report.totalExpenses += amount;
       }
@@ -111,7 +129,12 @@ export interface BSReport {
   isBalanced: boolean;
 }
 
-export const generateBalanceSheet = (asOfDate: string, businessId: BusinessId | 'Combined'): BSReport => {
+export const generateBalanceSheet = (
+  journal: JournalEntry[], 
+  accounts: Account[], 
+  asOfDate: string, 
+  businessId: BusinessId | 'Combined'
+): BSReport => {
   const report: BSReport = {
     assets: [],
     liabilities: [],
@@ -125,7 +148,7 @@ export const generateBalanceSheet = (asOfDate: string, businessId: BusinessId | 
   const accountTotals = new Map<string, number>();
   let netIncomeYTD = 0;
 
-  mockJournal.forEach(entry => {
+  journal.forEach(entry => {
     if (entry.date > asOfDate) return;
     if (businessId !== 'Combined' && entry.businessId !== businessId) return;
 
@@ -133,8 +156,8 @@ export const generateBalanceSheet = (asOfDate: string, businessId: BusinessId | 
       const net = line.debit - line.credit;
       accountTotals.set(line.accountId, (accountTotals.get(line.accountId) || 0) + net);
       
-      // Calculate Net Income Impact for Retained Earnings
-      const acct = mockAccounts.find(a => a.id === line.accountId);
+      // Calculate Net Income Impact for Retained Earnings (Virtual)
+      const acct = accounts.find(a => a.id === line.accountId);
       if (acct) {
         if (acct.type === 'Income') netIncomeYTD += (line.credit - line.debit);
         if (acct.type === 'Expense' || acct.type === 'Cost of Services') netIncomeYTD -= (line.debit - line.credit);
@@ -142,7 +165,7 @@ export const generateBalanceSheet = (asOfDate: string, businessId: BusinessId | 
     });
   });
 
-  mockAccounts.forEach(acc => {
+  accounts.forEach(acc => {
     const rawBalance = accountTotals.get(acc.id) || 0;
     if (acc.type === 'Asset') {
       const amount = rawBalance; // Debit Normal
@@ -188,18 +211,28 @@ export interface CashFlowMonth {
   net: number;
 }
 
-export const generateCashFlow = (): CashFlowMonth[] => {
+export const generateCashFlow = (
+  journal: JournalEntry[],
+  start: string,
+  end: string,
+  businessId: BusinessId | 'Combined'
+): CashFlowMonth[] => {
   const months = new Map<string, {in: number, out: number}>();
   
-  mockJournal.forEach(entry => {
+  journal.forEach(entry => {
+    if (entry.date < start || entry.date > end) return;
+    if (businessId !== 'Combined' && entry.businessId !== businessId) return;
+
     const monthKey = entry.date.substring(0, 7); // YYYY-MM
     if (!months.has(monthKey)) months.set(monthKey, {in: 0, out: 0});
     
     const data = months.get(monthKey)!;
 
     entry.lines.forEach(line => {
-      // Very simplified: Track movements in Checking (1000)
-      if (line.accountId === '1000') {
+      // Heuristic: Track movements in Asset accounts (1000 series) 
+      // Ideally this looks at Bank Accounts specifically, simplified to '1000' checking for now.
+      // Better Logic: Look up account type Asset + name 'Checking'/'Savings'
+      if (line.accountId === '1000' || line.accountId === '1001') { // Checking Accounts
         if (line.debit > 0) data.in += line.debit;
         if (line.credit > 0) data.out += line.credit;
       }
@@ -218,11 +251,11 @@ export const generateCashFlow = (): CashFlowMonth[] => {
 
 // --- EXPORT ---
 
-export const generateGeneralLedgerCSV = (): string => {
+export const generateGeneralLedgerCSV = (journal: JournalEntry[], accounts: Account[]): string => {
   const header = "Date,Business,Account,Description,Debit,Credit,Project\n";
-  const rows = mockJournal.flatMap(entry => {
+  const rows = journal.flatMap(entry => {
     return entry.lines.map(line => {
-      const acct = mockAccounts.find(a => a.id === line.accountId);
+      const acct = accounts.find(a => a.id === line.accountId);
       return `${entry.date},${entry.businessId},"${acct?.name || line.accountId}","${line.description || entry.description}",${line.debit},${line.credit},${entry.projectId || ''}`;
     });
   }).join("\n");

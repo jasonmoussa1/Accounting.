@@ -2,18 +2,23 @@
 import React, { useState } from 'react';
 import { generateProfitAndLoss, generateBalanceSheet, generateCashFlow, generateGeneralLedgerCSV, getFinancialDateRange } from '../services/reporting';
 import { Download, Printer, Filter, TrendingUp, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react';
-import { BusinessId } from '../types';
+import { BusinessId, Account, JournalEntry } from '../types';
 import { useFinance } from '../contexts/FinanceContext';
 
 export const Reports: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'pnl' | 'bs' | 'ar' | 'cf'>('ar');
+  // TASK 2: LIVE DATA INJECTION
+  const { journal, accounts, invoices, customers } = useFinance();
+
+  const [activeTab, setActiveTab] = useState<'pnl' | 'bs' | 'ar' | 'cf'>('pnl');
   const [businessFilter, setBusinessFilter] = useState<BusinessId | 'Combined'>('Combined');
-  const [dateRange, setDateRange] = useState<'month' | 'quarter' | 'year' | 'ytd'>('ytd');
+  // TASK 5: DYNAMIC DATE RANGES
+  const [dateRange, setDateRange] = useState<'month' | 'quarter' | 'year' | 'lastYear' | 'ytd'>('ytd');
 
   const dates = getFinancialDateRange(dateRange);
 
   const handleExportGL = () => {
-    const csv = generateGeneralLedgerCSV();
+    // Pass live data to export
+    const csv = generateGeneralLedgerCSV(journal, accounts);
     const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csv);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -25,6 +30,8 @@ export const Reports: React.FC = () => {
   const handlePrint = () => {
     window.print();
   };
+
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="p-8 max-w-[1200px] mx-auto space-y-8 print:p-0 print:max-w-none">
@@ -76,8 +83,9 @@ export const Reports: React.FC = () => {
           >
             <option value="month">Current Month</option>
             <option value="quarter">Current Quarter</option>
-            <option value="ytd">Year to Date</option>
-            <option value="year">Full Year 2023</option>
+            <option value="ytd">Year to Date ({currentYear})</option>
+            <option value="year">Full Year {currentYear}</option>
+            <option value="lastYear">Last Year ({currentYear - 1})</option>
           </select>
         </div>
 
@@ -123,10 +131,34 @@ export const Reports: React.FC = () => {
         </div>
 
         {/* CONTENT SWITCHER */}
-        {activeTab === 'pnl' && <ProfitAndLossView start={dates.start} end={dates.end} businessId={businessFilter} />}
-        {activeTab === 'bs' && <BalanceSheetView asOf={dates.end} businessId={businessFilter} />}
-        {activeTab === 'ar' && <ARAgingView businessId={businessFilter} />}
-        {activeTab === 'cf' && <CashFlowView />}
+        {activeTab === 'pnl' && (
+            <ProfitAndLossView 
+                journal={journal} 
+                accounts={accounts} 
+                start={dates.start} 
+                end={dates.end} 
+                businessId={businessFilter} 
+            />
+        )}
+        {activeTab === 'bs' && (
+            <BalanceSheetView 
+                journal={journal} 
+                accounts={accounts} 
+                asOf={dates.end} 
+                businessId={businessFilter} 
+            />
+        )}
+        {activeTab === 'ar' && (
+            <ARAgingView businessId={businessFilter} />
+        )}
+        {activeTab === 'cf' && (
+            <CashFlowView 
+                journal={journal}
+                start={dates.start} 
+                end={dates.end} 
+                businessId={businessFilter} 
+            />
+        )}
 
       </div>
     </div>
@@ -160,11 +192,8 @@ const ReportTable: React.FC<{ title: string, rows: { name: string, amount: numbe
   </div>
 );
 
-const ProfitAndLossView: React.FC<{ start: string, end: string, businessId: any }> = ({ start, end, businessId }) => {
-  // Note: generateProfitAndLoss is imported from services/reporting which uses live journal data (via mockJournal export, which is actually updated by context in app flow but separated here for brevity in this specific file edit block. In full app, reports should ideally consume Context Data)
-  // For this fix, we assume services/reporting is consuming the data correctly or we would pass it down. 
-  // Given constraints, we use the imported generator.
-  const data = generateProfitAndLoss(start, end, businessId);
+const ProfitAndLossView: React.FC<{ journal: JournalEntry[], accounts: Account[], start: string, end: string, businessId: any }> = ({ journal, accounts, start, end, businessId }) => {
+  const data = generateProfitAndLoss(journal, accounts, start, end, businessId);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -207,8 +236,8 @@ const ProfitAndLossView: React.FC<{ start: string, end: string, businessId: any 
   );
 };
 
-const BalanceSheetView: React.FC<{ asOf: string, businessId: any }> = ({ asOf, businessId }) => {
-  const data = generateBalanceSheet(asOf, businessId);
+const BalanceSheetView: React.FC<{ journal: JournalEntry[], accounts: Account[], asOf: string, businessId: any }> = ({ journal, accounts, asOf, businessId }) => {
+  const data = generateBalanceSheet(journal, accounts, asOf, businessId);
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -256,16 +285,28 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   // Bucketing logic
   const buckets = { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 };
   
+  // TASK 4: HARDENED A/R LOGIC
   const relevantInvoices = invoices.filter(inv => {
+      // 1. Business Filter
       if (businessId !== 'Combined' && inv.businessId !== businessId) return false;
-      return inv.status !== 'paid' && inv.status !== 'draft';
+      // 2. Exclude Drafts
+      if (inv.status === 'draft') return false;
+      // 3. Outstanding Check
+      const paid = inv.amountPaid ?? 0;
+      const outstanding = Math.max(0, inv.totalAmount - paid);
+      return outstanding > 0.01;
   });
 
   const today = new Date();
 
   relevantInvoices.forEach(inv => {
-    const outstanding = inv.totalAmount - inv.amountPaid;
-    const dueDate = new Date(inv.dueDate);
+    const paid = inv.amountPaid ?? 0;
+    const outstanding = Math.max(0, inv.totalAmount - paid);
+    
+    // Default to invoice date if due date missing (Date Safety)
+    const dueStr = inv.dueDate || inv.dateIssued;
+    const dueDate = new Date(dueStr);
+    
     const diffTime = today.getTime() - dueDate.getTime();
     const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -309,8 +350,11 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
           <tbody className="divide-y divide-slate-100">
             {relevantInvoices.map(inv => {
                 const clientName = customers.find(c => c.id === inv.customerId)?.name || 'Unknown';
-                const outstanding = inv.totalAmount - inv.amountPaid;
-                const dueDate = new Date(inv.dueDate);
+                const paid = inv.amountPaid ?? 0;
+                const outstanding = Math.max(0, inv.totalAmount - paid);
+                
+                const dueStr = inv.dueDate || inv.dateIssued;
+                const dueDate = new Date(dueStr);
                 const diffTime = today.getTime() - dueDate.getTime();
                 const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                 
@@ -338,29 +382,32 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   );
 };
 
-const CashFlowView: React.FC = () => {
-  const data = generateCashFlow();
+const CashFlowView: React.FC<{ journal: JournalEntry[], start: string, end: string, businessId: any }> = ({ journal, start, end, businessId }) => {
+  // TASK 6: SYNCED CASH FLOW
+  const data = generateCashFlow(journal, start, end, businessId);
 
   return (
     <div>
       <div className="h-64 flex items-end justify-between gap-2 mb-8 px-4">
-        {data.map((m, i) => (
+        {data.length > 0 ? data.map((m, i) => (
           <div key={i} className="flex-1 flex flex-col justify-end items-center gap-2 group relative">
              <div className="w-full max-w-[40px] bg-slate-100 rounded-t-sm relative flex items-end justify-center overflow-hidden" style={{height: '100%'}}>
                 <div 
                    className="w-full bg-rose-400 opacity-80 absolute bottom-0" 
-                   style={{height: `${Math.min((m.outflow / 20000) * 100, 100)}%`}}
+                   style={{height: `${Math.min((m.outflow / (m.inflow + m.outflow + 1)) * 100, 100)}%`}}
                    title={`Out: $${m.outflow}`}
                 />
                 <div 
                    className="w-full bg-emerald-400 opacity-60 absolute bottom-0 mix-blend-multiply" 
-                   style={{height: `${Math.min((m.inflow / 20000) * 100, 100)}%`}}
+                   style={{height: `${Math.min((m.inflow / (m.inflow + m.outflow + 1)) * 100, 100)}%`}}
                    title={`In: $${m.inflow}`}
                 />
              </div>
              <div className="text-[10px] text-slate-400 -rotate-45 mt-2 origin-left whitespace-nowrap">{m.month}</div>
           </div>
-        ))}
+        )) : (
+            <div className="w-full h-full flex items-center justify-center text-slate-400">No cash flow data for this period.</div>
+        )}
       </div>
 
       <div className="border rounded-xl overflow-hidden border-slate-200">
@@ -384,6 +431,7 @@ const CashFlowView: React.FC = () => {
                 </td>
               </tr>
             ))}
+            {data.length === 0 && <tr><td colSpan={4} className="text-center py-4 text-slate-400">No data found.</td></tr>}
           </tbody>
         </table>
       </div>
