@@ -4,19 +4,17 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // --- HELPER FUNCTIONS ---
-    
-    // Check if the requesting user is authenticated and matches the document's owner
     function isResourceOwner() {
       return request.auth != null && resource.data.userId == request.auth.uid;
     }
     
-    // Check if the user is authenticated and setting themselves as the owner on creation
     function isCreatingOwnedResource() {
       return request.auth != null && request.resource.data.userId == request.auth.uid;
     }
 
-    // --- STANDARD COLLECTIONS (Read/Write/Delete Allowed) ---
-
+    // --- STANDARD COLLECTIONS (Read/Write Allowed) ---
+    // These hold auxiliary data where client-side optimistic updates are acceptable.
+    
     match /accounts/{docId} {
       allow read, update, delete: if isResourceOwner();
       allow create: if isCreatingOwnedResource();
@@ -66,28 +64,36 @@ service cloud.firestore {
       allow read, update, delete: if isResourceOwner();
       allow create: if isCreatingOwnedResource();
     }
+    
+    // --- SECURE BANKING DATA ---
+    match /bank_connections/{docId} {
+      // NO ONE can read or write bank tokens from the browser.
+      // This prevents Plaid access tokens from being leaked or stolen.
+      allow read, write: if false; 
+    }
 
-    // --- INTEGRITY COLLECTIONS (Restricted Deletion) ---
+    // --- INTEGRITY COLLECTIONS (Strict Enforcement) ---
 
     // Ledger: Immutable History
+    // CRITICAL FIX: Deny WRITE from client. Forces usage of 'postJournalEntrySecure' Cloud Function.
     match /journal_entries/{docId} {
-      allow read, update: if isResourceOwner(); // Updates allowed for metadata/status, but logic should prefer Reversals
-      allow create: if isCreatingOwnedResource();
-      allow delete: if false; // INTEGRITY RULE: Never delete a posted entry
+      allow read: if isResourceOwner();
+      allow create, update, delete: if false; 
     }
 
     // Reconciliations: Immutable Periods
+    // CRITICAL FIX: Deny UPDATE/DELETE. Once locked, it stays locked.
     match /reconciliations/{docId} {
-      allow read, update: if isResourceOwner();
+      allow read: if isResourceOwner();
       allow create: if isCreatingOwnedResource();
-      allow delete: if false; // INTEGRITY RULE: Never delete a lock record
+      allow update, delete: if false;
     }
 
-    // Audit Log: Append Only
+    // Audit Log: Tamper-Proof
     match /audit_events/{docId} {
       allow read: if isResourceOwner();
       allow create: if isCreatingOwnedResource();
-      allow update, delete: if false; // INTEGRITY RULE: Tamper-proof log
+      allow update, delete: if false; 
     }
   }
 }
