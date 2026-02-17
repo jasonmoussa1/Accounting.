@@ -71,7 +71,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPath, onNavigate }) => 
           <FolderTree size={18} />
           Chart of Accounts
         </button>
-        <button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 hover:text-white transition-colors">
+        <button 
+          onClick={() => onNavigate('settings')}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            currentPath === 'settings' ? 'bg-indigo-900 text-indigo-400' : 'hover:bg-slate-800 hover:text-white'
+          }`}
+        >
           <Settings size={18} />
           Settings
         </button>

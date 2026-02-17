@@ -1,24 +1,48 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { generateProfitAndLoss, generateBalanceSheet, generateCashFlow, generateGeneralLedgerCSV, getFinancialDateRange } from '../services/reporting';
-import { Download, Printer, Filter, TrendingUp, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react';
-import { BusinessId, Account, JournalEntry } from '../types';
+import { Download, Printer, Filter, Loader2 } from 'lucide-react';
+import { BusinessId, JournalEntry, Transaction, Account } from '../types';
 import { useFinance } from '../contexts/FinanceContext';
 
 export const Reports: React.FC = () => {
-  // TASK 2: LIVE DATA INJECTION
-  const { journal, accounts, invoices, customers } = useFinance();
+  const { accounts, invoices, customers, fetchFinancialHistory } = useFinance();
 
   const [activeTab, setActiveTab] = useState<'pnl' | 'bs' | 'ar' | 'cf'>('pnl');
   const [businessFilter, setBusinessFilter] = useState<BusinessId | 'Combined'>('Combined');
-  // TASK 5: DYNAMIC DATE RANGES
   const [dateRange, setDateRange] = useState<'month' | 'quarter' | 'year' | 'lastYear' | 'ytd'>('ytd');
+  
+  // Local State for Report Data (since Context only holds 90 days now)
+  const [reportJournal, setReportJournal] = useState<JournalEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [dataLoadedForRange, setDataLoadedForRange] = useState<string>(''); // Key to prevent re-fetching
 
   const dates = getFinancialDateRange(dateRange);
 
+  // FETCH DATA ON CHANGE
+  useEffect(() => {
+    const loadData = async () => {
+        const rangeKey = `${dates.start}-${dates.end}`;
+        if (dataLoadedForRange === rangeKey) return; // Cache hit in local state
+
+        setLoading(true);
+        try {
+            const { journal } = await fetchFinancialHistory(dates.start, dates.end);
+            setReportJournal(journal);
+            setDataLoadedForRange(rangeKey);
+        } catch (e) {
+            console.error("Failed to fetch report data", e);
+            alert("Error loading report data. Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    };
+    loadData();
+  }, [dates.start, dates.end, fetchFinancialHistory, dataLoadedForRange]);
+
+
   const handleExportGL = () => {
-    // Pass live data to export
-    const csv = generateGeneralLedgerCSV(journal, accounts);
+    const csv = generateGeneralLedgerCSV(reportJournal, accounts);
     const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csv);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -78,7 +102,10 @@ export const Reports: React.FC = () => {
           <label className="text-xs uppercase font-bold text-slate-400">Range</label>
           <select 
             value={dateRange} 
-            onChange={(e) => setDateRange(e.target.value as any)}
+            onChange={(e) => {
+                setDateRange(e.target.value as any);
+                setLoading(true); // Trigger UI loading state immediately
+            }}
             className="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-sm font-medium focus:ring-2 focus:ring-indigo-500/20"
           >
             <option value="month">Current Month</option>
@@ -108,8 +135,17 @@ export const Reports: React.FC = () => {
       </div>
 
       {/* REPORT CANVAS */}
-      <div className="bg-white shadow-lg min-h-[800px] p-12 print:shadow-none print:p-0">
+      <div className="bg-white shadow-lg min-h-[800px] p-12 print:shadow-none print:p-0 relative">
         
+        {loading && (
+            <div className="absolute inset-0 bg-white/80 z-10 flex items-center justify-center backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-2 text-indigo-600">
+                    <Loader2 size={32} className="animate-spin" />
+                    <p className="text-sm font-bold">Calculating Report...</p>
+                </div>
+            </div>
+        )}
+
         {/* Print Header */}
         <div className="mb-8 border-b-2 border-slate-900 pb-4">
           <h1 className="text-3xl font-bold text-slate-900 uppercase tracking-tight">
@@ -133,7 +169,7 @@ export const Reports: React.FC = () => {
         {/* CONTENT SWITCHER */}
         {activeTab === 'pnl' && (
             <ProfitAndLossView 
-                journal={journal} 
+                journal={reportJournal} 
                 accounts={accounts} 
                 start={dates.start} 
                 end={dates.end} 
@@ -142,7 +178,7 @@ export const Reports: React.FC = () => {
         )}
         {activeTab === 'bs' && (
             <BalanceSheetView 
-                journal={journal} 
+                journal={reportJournal} 
                 accounts={accounts} 
                 asOf={dates.end} 
                 businessId={businessFilter} 
@@ -153,7 +189,7 @@ export const Reports: React.FC = () => {
         )}
         {activeTab === 'cf' && (
             <CashFlowView 
-                journal={journal}
+                journal={reportJournal}
                 start={dates.start} 
                 end={dates.end} 
                 businessId={businessFilter} 
@@ -166,7 +202,7 @@ export const Reports: React.FC = () => {
   );
 };
 
-// --- SUB-COMPONENTS ---
+// --- SUB-COMPONENTS (Same as before, simplified for brevity but functionally identical) ---
 
 const ReportTable: React.FC<{ title: string, rows: { name: string, amount: number, indent?: boolean }[], total: number, totalLabel: string, isPositiveGood?: boolean }> = ({ title, rows, total, totalLabel, isPositiveGood = true }) => (
   <div className="mb-8">
@@ -244,8 +280,7 @@ const BalanceSheetView: React.FC<{ journal: JournalEntry[], accounts: Account[],
     <div className="max-w-3xl mx-auto space-y-8">
       {!data.isBalanced && (
         <div className="bg-rose-100 border border-rose-200 text-rose-800 p-4 rounded-lg flex items-center gap-2 mb-6">
-          <AlertTriangle size={20} />
-          <span className="font-bold">Warning: Ledger is out of balance. Assets ≠ Liabilities + Equity.</span>
+          <div className="font-bold">Warning: Ledger is out of balance. Assets ≠ Liabilities + Equity.</div>
         </div>
       )}
 
@@ -280,25 +315,16 @@ const BalanceSheetView: React.FC<{ journal: JournalEntry[], accounts: Account[],
   );
 };
 
-// AUDIT TARGET: A/R AGING CALCULATION
 const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   const { invoices, customers } = useFinance();
   
-  // Bucketing logic
   const buckets = { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 };
   
-  // TASK 4: HARDENED A/R LOGIC
   const relevantInvoices = invoices.filter(inv => {
-      // 1. Business Filter
       if (businessId !== 'Combined' && inv.businessId !== businessId) return false;
-      // 2. Exclude Drafts
       if (inv.status === 'draft') return false;
-      
-      // 3. Outstanding Check (Safe Math)
-      // Confirmed: Uses Math.max(0, ...) to prevent negative balances from skewed payment data
       const paid = inv.amountPaid ?? 0;
       const outstanding = Math.max(0, inv.totalAmount - paid);
-      
       return outstanding > 0.01;
   });
 
@@ -307,11 +333,8 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
   relevantInvoices.forEach(inv => {
     const paid = inv.amountPaid ?? 0;
     const outstanding = Math.max(0, inv.totalAmount - paid);
-    
-    // Default to invoice date if due date missing (Date Safety)
     const dueStr = inv.dueDate || inv.dateIssued;
     const dueDate = new Date(dueStr);
-    
     const diffTime = today.getTime() - dueDate.getTime();
     const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -357,12 +380,10 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
                 const clientName = customers.find(c => c.id === inv.customerId)?.name || 'Unknown';
                 const paid = inv.amountPaid ?? 0;
                 const outstanding = Math.max(0, inv.totalAmount - paid);
-                
                 const dueStr = inv.dueDate || inv.dateIssued;
                 const dueDate = new Date(dueStr);
                 const diffTime = today.getTime() - dueDate.getTime();
                 const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                
                 return (
                 <tr key={inv.id}>
                     <td className="px-6 py-3 font-medium text-slate-900">{clientName}</td>
@@ -388,7 +409,6 @@ const ARAgingView: React.FC<{ businessId: any }> = ({ businessId }) => {
 };
 
 const CashFlowView: React.FC<{ journal: JournalEntry[], start: string, end: string, businessId: any, accounts: Account[] }> = ({ journal, start, end, businessId, accounts }) => {
-  // TASK 6: SYNCED CASH FLOW
   const data = generateCashFlow(journal, start, end, businessId, accounts);
 
   return (

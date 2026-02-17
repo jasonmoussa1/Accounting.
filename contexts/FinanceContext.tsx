@@ -19,10 +19,16 @@ interface FinanceContextType {
   serviceItems: ServiceItem[];
   invoices: Invoice[];
   invoicePayments: InvoicePayment[];
+  systemSettings: SystemSettings | null;
+  
   refreshData: () => Promise<void>;
   loading: boolean;
   
+  // On-demand Fetching for Reports
+  fetchFinancialHistory: (startDate: string, endDate: string) => Promise<{ journal: JournalEntry[], transactions: Transaction[] }>;
+
   // Actions
+  toggleTutorialMode: (enabled: boolean) => Promise<void>;
   addTransactionToInbox: (tx: Omit<Transaction, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   postJournalEntry: (entry: Omit<JournalEntry, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => Promise<string>;
   postTransaction: (tx: Transaction) => Promise<void>; 
@@ -67,15 +73,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [invoicePayments, setInvoicePayments] = useState<InvoicePayment[]>([]);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
 
   const refreshData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-        const [acc, je, tx, proj, cont, cust, rec, merch, srv, inv, invPay] = await Promise.all([
+        // Calculate 90 Days Ago
+        const d = new Date();
+        d.setDate(d.getDate() - 90);
+        const ninetyDaysAgo = d.toISOString().split('T')[0];
+        const today = new Date().toISOString().split('T')[0];
+
+        // PARALLEL LOADING
+        // Limited: Transactions, Journal
+        // Full: Accounts, Projects, Contractors, etc.
+        const [acc, je, tx, proj, cont, cust, rec, merch, srv, inv, invPay, settings] = await Promise.all([
             FirestoreRepository.getCollection<Account>(COLLECTIONS.ACCOUNTS, currentUser.uid),
-            FirestoreRepository.getCollection<JournalEntry>(COLLECTIONS.JOURNAL, currentUser.uid),
-            FirestoreRepository.getCollection<Transaction>(COLLECTIONS.TRANSACTIONS, currentUser.uid),
+            FirestoreRepository.getCollectionByDateRange<JournalEntry>(COLLECTIONS.JOURNAL, currentUser.uid, ninetyDaysAgo, today),
+            FirestoreRepository.getCollectionByDateRange<Transaction>(COLLECTIONS.TRANSACTIONS, currentUser.uid, ninetyDaysAgo, today),
             FirestoreRepository.getCollection<Project>(COLLECTIONS.PROJECTS, currentUser.uid),
             FirestoreRepository.getCollection<Contractor>(COLLECTIONS.CONTRACTORS, currentUser.uid),
             FirestoreRepository.getCollection<Customer>(COLLECTIONS.CUSTOMERS, currentUser.uid),
@@ -83,7 +99,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
             FirestoreRepository.getCollection<MerchantProfile>(COLLECTIONS.MERCHANT_PROFILES, currentUser.uid),
             FirestoreRepository.getCollection<ServiceItem>(COLLECTIONS.SERVICE_ITEMS, currentUser.uid),
             FirestoreRepository.getCollection<Invoice>(COLLECTIONS.INVOICES, currentUser.uid),
-            FirestoreRepository.getCollection<InvoicePayment>(COLLECTIONS.INVOICE_PAYMENTS, currentUser.uid)
+            FirestoreRepository.getCollection<InvoicePayment>(COLLECTIONS.INVOICE_PAYMENTS, currentUser.uid),
+            FirestoreRepository.getCollection<SystemSettings>(COLLECTIONS.SETTINGS, currentUser.uid)
         ]);
         
         setAccounts(acc);
@@ -97,6 +114,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setServiceItems(srv);
         setInvoices(inv);
         setInvoicePayments(invPay);
+        setSystemSettings(settings.length > 0 ? settings[0] : null);
 
     } catch (e) {
         console.error("Failed to load finance data", e);
@@ -116,6 +134,34 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [currentUser]);
 
   // --- ACTIONS ---
+
+  const fetchFinancialHistory = async (startDate: string, endDate: string) => {
+    if (!currentUser) throw new Error("Not logged in");
+    const [journal, transactions] = await Promise.all([
+        FirestoreRepository.getCollectionByDateRange<JournalEntry>(COLLECTIONS.JOURNAL, currentUser.uid, startDate, endDate),
+        FirestoreRepository.getCollectionByDateRange<Transaction>(COLLECTIONS.TRANSACTIONS, currentUser.uid, startDate, endDate)
+    ]);
+    return { journal, transactions };
+  };
+
+  const toggleTutorialMode = async (enabled: boolean) => {
+      if (!currentUser) return;
+      const docId = systemSettings?.id || 'default';
+      
+      const payload = {
+          organizationName: systemSettings?.organizationName || 'My Business',
+          schemaVersion: '1.0',
+          tutorialMode: enabled
+      };
+
+      if (!systemSettings) {
+         // Create if missing
+         await FirestoreRepository.setDocument(COLLECTIONS.SETTINGS, docId, payload, currentUser.uid);
+      } else {
+         await FirestoreRepository.updateDocument(COLLECTIONS.SETTINGS, docId, { tutorialMode: enabled }, currentUser.uid);
+      }
+      await refreshData();
+  };
 
   const logAuditEvent = async (action: string, details: string) => {
       if (!currentUser) return;
@@ -137,15 +183,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (!currentUser) throw new Error("Not logged in");
       if (!functions) throw new Error("Cloud Functions not initialized.");
       
-      // TASK 2: LEDGER GUARD (Hybrid Validation)
-      
-      // 1. Client-Side Pre-Flight Check (Fast UX feedback)
-      // This throws immediately if unbalanced or basic errors exist.
       validateJournalEntry(entry, accounts, reconciliations);
 
-      // 2. Server-Side Execution (Secure)
-      // Since firestore.rules blocks direct creation of journal_entries, we MUST use the Cloud Function.
-      // The function will re-validate (Debits=Credits, Locks) before writing with Admin SDK.
       try {
           const postFn = httpsCallable(functions, 'postJournalEntrySecure');
           const result = await postFn({ entry });
@@ -161,51 +200,26 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const postTransaction = async (tx: Transaction) => {
     if (!currentUser) throw new Error("Not logged in");
-
-    const absAmount = Math.abs(tx.amount);
-    const lines = [];
-
-    // Logic: Construct Balanced Lines
-    if (tx.transactionType === 'expense') {
-        lines.push({ accountId: tx.assignedAccount!, debit: absAmount, credit: 0, description: tx.description, contractorId: tx.assignedContractorId });
-        lines.push({ accountId: tx.bankAccountId, debit: 0, credit: absAmount, description: tx.description });
-    } else if (tx.transactionType === 'income') {
-        lines.push({ accountId: tx.bankAccountId, debit: absAmount, credit: 0, description: tx.description });
-        lines.push({ accountId: tx.assignedAccount!, debit: 0, credit: absAmount, description: tx.description });
-    } else if (tx.transactionType === 'transfer') {
-        if (!tx.transferAccountId) throw new Error("Transfer target required");
-        if (tx.amount < 0) {
-            lines.push({ accountId: tx.transferAccountId, debit: absAmount, credit: 0, description: "Transfer In" });
-            lines.push({ accountId: tx.bankAccountId, debit: 0, credit: absAmount, description: "Transfer Out" });
-        } else {
-            lines.push({ accountId: tx.bankAccountId, debit: absAmount, credit: 0, description: "Transfer In" });
-            lines.push({ accountId: tx.transferAccountId, debit: 0, credit: absAmount, description: "Transfer Out" });
-        }
+    if (!functions) throw new Error("Cloud Functions not initialized.");
+    
+    try {
+        const postFn = httpsCallable(functions, 'postTransactionSecure');
+        await postFn({ transactionId: tx.id });
+        await refreshData();
+    } catch (error: any) {
+        console.error("Atomic Post Error:", error);
+        throw new Error(`Failed to post transaction: ${error.message}`);
     }
-
-    const jeId = await postJournalEntry({
-        date: tx.date,
-        description: tx.description,
-        businessId: tx.assignedBusiness!,
-        projectId: tx.assignedProject,
-        lines: lines
-    });
-
-    await updateTransaction(tx.id, { 
-        status: 'posted', 
-        linkedJournalEntryId: jeId,
-        isDuplicate: false 
-    });
   };
 
   const updateTransaction = async (id: string, updates: Partial<Transaction>) => {
       if (!currentUser) return;
       const original = inbox.find(t => t.id === id);
-      if (!original) return;
+      if (!original) return; // Note: If old transaction, it might not be in 'inbox', so editing might fail silently. This is expected with partial hydration.
 
       if (original.status === 'posted' && original.linkedJournalEntryId) {
            const originalJE = journal.find(j => j.id === original.linkedJournalEntryId);
-           if (!originalJE) throw new Error("Linked Journal Entry not found.");
+           if (!originalJE) throw new Error("Linked Journal Entry not found in recent history. Cannot reverse.");
 
            const hasClearedLines = originalJE.lines.some((_, idx) => {
                 const lineKey = `${originalJE.id}:${idx}`; 
@@ -353,7 +367,6 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           lines
       };
       
-      // Use the Secure Post function here as well for consistency
       await postJournalEntry(je);
       
       await logAuditEvent("CREATE_AJE", `Posted Opening Balances for ${businessId} on ${date}`);
@@ -370,42 +383,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const recordInvoicePayment = async (data: { invoiceId: string, amount: number, date: string, method: string }) => {
       if (!currentUser) throw new Error("Not logged in");
+      if (!functions) throw new Error("Cloud Functions not initialized.");
       if (data.amount <= 0) throw new Error("Payment amount must be positive.");
 
-      const invoice = invoices.find(i => i.id === data.invoiceId);
-      if (!invoice) throw new Error("Invoice not found");
-
-      const undepositedFundsId = getAccountIdByCode(accounts, SYSTEM_CODES.UNDEPOSITED_FUNDS);
-      const salesIncomeId = getAccountIdByCode(accounts, SYSTEM_CODES.SALES_INCOME);
-
-      const jeId = await postJournalEntry({
-          date: data.date,
-          description: `Payment for Inv #${invoice.invoiceNumber}`,
-          businessId: invoice.businessId,
-          lines: [
-              { accountId: undepositedFundsId, debit: data.amount, credit: 0, description: 'Undeposited Funds' },
-              { accountId: salesIncomeId, debit: 0, credit: data.amount, description: 'Sales Income' } 
-          ]
-      });
-
-      await FirestoreRepository.addDocument<InvoicePayment>(COLLECTIONS.INVOICE_PAYMENTS, {
-          invoiceId: data.invoiceId,
-          date: data.date,
-          amount: data.amount,
-          method: data.method as any,
-          linkedJournalEntryId: jeId
-      }, currentUser.uid);
-
-      const newPaid = (invoice.amountPaid || 0) + data.amount;
-      const newStatus = newPaid >= invoice.totalAmount ? 'paid' : 'partial';
-      
-      await FirestoreRepository.updateDocument(COLLECTIONS.INVOICES, invoice.id, {
-          amountPaid: newPaid,
-          status: newStatus
-      }, currentUser.uid);
-
-      await logAuditEvent("INVOICE_PAYMENT", `Recorded $${data.amount} payment for Inv #${invoice.invoiceNumber}`);
-      await refreshData();
+      try {
+          const recordFn = httpsCallable(functions, 'recordInvoicePaymentSecure');
+          await recordFn(data);
+          await refreshData();
+      } catch (error: any) {
+          console.error("Payment Record Error:", error);
+          throw new Error(`Failed to record payment: ${error.message}`);
+      }
   };
 
   return (
@@ -421,8 +409,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       serviceItems,
       invoices,
       invoicePayments,
+      systemSettings,
+      fetchFinancialHistory,
       refreshData,
       loading,
+      toggleTutorialMode,
       addTransactionToInbox,
       postJournalEntry,
       postTransaction,

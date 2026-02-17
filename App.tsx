@@ -14,6 +14,7 @@ import { ChartOfAccounts } from './components/ChartOfAccounts';
 import { OpeningBalances } from './components/OpeningBalances';
 import { Customers } from './components/Customers';
 import { Login } from './components/Login';
+import { Settings } from './components/Settings';
 import { NavPath } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FinanceProvider } from './contexts/FinanceContext';
@@ -69,6 +70,8 @@ const AppContent: React.FC = () => {
         return <ChartOfAccounts />;
       case 'setup':
         return <OpeningBalances />;
+      case 'settings':
+        return <Settings />;
       default:
         return <Dashboard />;
     }

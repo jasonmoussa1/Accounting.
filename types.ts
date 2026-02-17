@@ -1,5 +1,5 @@
 
-export type NavPath = 'dashboard' | 'transactions' | 'inbox' | 'reconciliation' | 'invoices' | 'customers' | 'contractors' | 'reports' | 'migration' | 'projects' | 'coa' | 'setup';
+export type NavPath = 'dashboard' | 'transactions' | 'inbox' | 'reconciliation' | 'invoices' | 'customers' | 'contractors' | 'reports' | 'migration' | 'projects' | 'coa' | 'setup' | 'settings';
 
 export type BusinessId = 'Big Sky FPV' | 'TRL Band' | 'Shared';
 
@@ -69,6 +69,9 @@ export interface Transaction extends FirestoreEntity {
   category?: string; 
   isContractor?: boolean;
   merchant?: string;
+
+  // New Field: Receipts
+  receiptUrls?: string[];
 }
 
 export type AccountType = 'Asset' | 'Liability' | 'Equity' | 'Income' | 'Cost of Services' | 'Expense';
@@ -109,6 +112,8 @@ export interface JournalEntry extends FirestoreEntity {
   isAdjustingEntry?: boolean; 
   adjustmentReason?: string;
   originalJournalEntryId?: string; // Reference to the entry this reverses/corrects
+  
+  receiptUrls?: string[];
 }
 
 export interface Reconciliation extends FirestoreEntity {
@@ -237,4 +242,5 @@ export interface SystemSettings extends FirestoreEntity {
     schemaVersion: string;
     lastUpdatedAt: string;
     organizationName: string;
+    tutorialMode?: boolean;
 }

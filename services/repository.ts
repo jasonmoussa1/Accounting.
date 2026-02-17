@@ -57,6 +57,32 @@ import {
         ...doc.data()
       })) as T[];
     }
+
+    // READ (Date Range) - For Pagination & Reports
+    static async getCollectionByDateRange<T>(
+        collectionName: string, 
+        userId: string, 
+        startDate: string, 
+        endDate: string,
+        dateField: string = 'date'
+    ): Promise<T[]> {
+        this.checkConnection();
+        if (!userId) throw new Error("Security Error: No User ID provided for query.");
+
+        // NOTE: Requires composite index on [userId, dateField] in Firestore
+        const q = query(
+            collection(db!, collectionName), 
+            where("userId", "==", userId),
+            where(dateField, ">=", startDate),
+            where(dateField, "<=", endDate)
+        );
+        const querySnapshot = await getDocs(q);
+        
+        return querySnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        })) as T[];
+    }
   
     // CREATE (Auto ID)
     static async addDocument<T extends Omit<FirestoreEntity, 'id'>>(

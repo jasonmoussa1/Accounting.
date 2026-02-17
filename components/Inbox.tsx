@@ -5,7 +5,8 @@ import { useFinance } from '../contexts/FinanceContext';
 import { applyRules, checkDuplicate } from '../services/accounting';
 import { CategorySelect } from './CategorySelect';
 import { CoachPanel } from './CoachPanel';
-import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank, Clock, RotateCw, Layout } from 'lucide-react';
+import { uploadReceipt } from '../services/storageService';
+import { Check, AlertTriangle, ArrowRight, Split, Briefcase, Building, CheckCircle2, User, Upload, X, Settings, Loader2, FileText, Database, ArrowLeftRight, PiggyBank, Clock, RotateCw, Layout, Paperclip, ExternalLink } from 'lucide-react';
 
 // --- ROW COMPONENT ---
 interface TransactionRowProps {
@@ -18,6 +19,9 @@ interface TransactionRowProps {
 
 const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost, isSelected, onSelect }) => {
   const { accounts, projects, contractors } = useFinance();
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const isPosted = item.status === 'posted';
   const needsRepost = item.status === 'needs_repost';
   const isExpense = item.amount < 0;
@@ -31,6 +35,27 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost,
   const isValid = isTransfer 
       ? !!item.transferAccountId
       : (!!item.assignedAccount && item.assignedAccount !== 'uncategorized');
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setIsUploading(true);
+      try {
+        const url = await uploadReceipt(file, item.userId, item.id);
+        const currentUrls = item.receiptUrls || [];
+        onUpdate(item.id, 'receiptUrls', [...currentUrls, url]);
+      } catch (error: any) {
+        alert("Upload failed: " + error.message);
+      } finally {
+        setIsUploading(false);
+      }
+    }
+  };
+
+  const triggerFileUpload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fileInputRef.current?.click();
+  };
 
   return (
     <div 
@@ -56,6 +81,24 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost,
           <div className={`text-sm font-mono font-bold ${isExpense ? 'text-slate-900' : 'text-emerald-600'}`}>
             {isExpense ? '-' : '+'}${Math.abs(item.amount).toFixed(2)}
           </div>
+          
+          {/* Receipt Preview Row */}
+          {item.receiptUrls && item.receiptUrls.length > 0 && (
+             <div className="flex gap-2 mt-2 flex-wrap">
+               {item.receiptUrls.map((url, idx) => (
+                 <a 
+                   key={idx} 
+                   href={url} 
+                   target="_blank" 
+                   rel="noopener noreferrer"
+                   onClick={(e) => e.stopPropagation()}
+                   className="flex items-center gap-1 bg-slate-100 text-slate-600 text-[10px] px-2 py-1 rounded hover:bg-slate-200 transition-colors border border-slate-200"
+                 >
+                   <Paperclip size={10} /> Receipt {idx + 1}
+                 </a>
+               ))}
+             </div>
+          )}
         </div>
 
         {/* 2. Controls */}
@@ -152,6 +195,25 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost,
         <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
           {!isPosted && (
             <>
+               <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept="image/*,application/pdf"
+                  capture="environment"
+                  onChange={handleFileUpload}
+               />
+               <button 
+                  onClick={triggerFileUpload}
+                  disabled={isUploading}
+                  className={`p-2 rounded-lg transition-colors ${
+                      item.receiptUrls && item.receiptUrls.length > 0 ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+                  }`}
+                  title="Attach Receipt"
+               >
+                  {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
+               </button>
+
                {!isExpense && !isTransfer && (
                   <button 
                     onClick={() => {
@@ -193,8 +255,6 @@ export const Inbox: React.FC = () => {
   
   const [filter, setFilter] = useState<'all' | 'imported' | 'posted'>('imported');
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpdate = async (id: string, field: keyof Transaction, value: any) => {
     await updateTransaction(id, { [field]: value });

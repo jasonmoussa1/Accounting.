@@ -1,7 +1,8 @@
 
 import React from 'react';
 import { Transaction, Account } from '../types';
-import { Lightbulb, AlertTriangle, ShieldCheck, Briefcase } from 'lucide-react';
+import { Lightbulb, AlertTriangle, ShieldCheck, Briefcase, GraduationCap } from 'lucide-react';
+import { useFinance } from '../contexts/FinanceContext';
 
 interface CoachPanelProps {
   transaction: Transaction | null;
@@ -9,12 +10,26 @@ interface CoachPanelProps {
 }
 
 export const CoachPanel: React.FC<CoachPanelProps> = ({ transaction, accounts }) => {
+  const { systemSettings } = useFinance();
+  const tutorialMode = systemSettings?.tutorialMode ?? false;
+
   if (!transaction) {
     return (
-      <div className="h-full bg-slate-50 border-l border-slate-200 p-6 flex flex-col items-center justify-center text-center text-slate-400">
+      <div className="h-full bg-slate-50 border-l border-slate-200 p-6 flex flex-col items-center justify-center text-center text-slate-400 space-y-4">
         <Lightbulb size={48} className="mb-4 text-indigo-200" />
         <p className="font-medium text-slate-600">Accounting Coach</p>
-        <p className="text-xs mt-2 max-w-[200px]">Select a transaction to receive categorization advice and tax tips.</p>
+        <p className="text-xs max-w-[200px]">Select a transaction to receive categorization advice and tax tips.</p>
+        
+        {tutorialMode && (
+          <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mt-4 max-w-[240px]">
+            <div className="flex items-center gap-2 text-indigo-700 font-bold text-xs uppercase mb-2">
+                <GraduationCap size={14} /> Tutorial Mode On
+            </div>
+            <p className="text-xs text-indigo-900 text-left">
+                Transactions are the raw feed from your bank. Your job is to assign them to an <strong>Account</strong> (Category) and a <strong>Project</strong>.
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -24,6 +39,15 @@ export const CoachPanel: React.FC<CoachPanelProps> = ({ transaction, accounts })
   
   // Logic Engine
   const tips = [];
+
+  // Tutorial Tip
+  if (tutorialMode) {
+      tips.push({
+          type: 'tutorial',
+          title: 'How to Process',
+          text: 'Review the details. If it matches a project, select it. If it is a personal expense accidentally charged to the business, categorize as "Owner Draw".'
+      });
+  }
 
   // Tip 1: Capital Asset
   if (amount > 2500 && transaction.transactionType === 'expense' && selectedAccount?.type !== 'Asset') {
@@ -90,15 +114,18 @@ export const CoachPanel: React.FC<CoachPanelProps> = ({ transaction, accounts })
             <div key={i} className={`p-4 rounded-xl border ${
                 tip.type === 'warning' ? 'bg-amber-50 border-amber-200' :
                 tip.type === 'action' ? 'bg-indigo-50 border-indigo-200' :
+                tip.type === 'tutorial' ? 'bg-emerald-50 border-emerald-200' :
                 'bg-slate-50 border-slate-200'
             }`}>
                 <div className="flex items-center gap-2 mb-2">
                     {tip.type === 'warning' && <AlertTriangle size={16} className="text-amber-600" />}
                     {tip.type === 'action' && <ShieldCheck size={16} className="text-indigo-600" />}
                     {tip.type === 'info' && <Briefcase size={16} className="text-slate-600" />}
+                    {tip.type === 'tutorial' && <GraduationCap size={16} className="text-emerald-600" />}
                     <span className={`text-xs font-bold uppercase ${
                         tip.type === 'warning' ? 'text-amber-700' :
                         tip.type === 'action' ? 'text-indigo-700' :
+                        tip.type === 'tutorial' ? 'text-emerald-700' :
                         'text-slate-700'
                     }`}>{tip.title}</span>
                 </div>
