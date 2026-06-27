@@ -102,7 +102,7 @@ const TransactionRow: React.FC<TransactionRowProps> = ({ item, onUpdate, onPost,
         </div>
 
         {/* 2. Controls */}
-        {!isPosted && (
+        {!isPosted ? (
           <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2" onClick={e => e.stopPropagation()}>
             
             <div className="flex bg-slate-100 rounded-lg p-1 h-[38px] items-center">
